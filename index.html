@@ -21,6 +21,11 @@
 <div id="infoBanner" class="banner info" hidden><span></span><button aria-label="閉じる">×</button></div>
 
 <main>
+  <!-- 合格数（撮影・結果の画面で表示。日産数量との照合用） -->
+  <div class="counter" id="counter" hidden>
+    <div class="cnt-text"><div class="cnt-main">合格 <b id="cntPass">0</b> 個</div><small id="cntSub"></small></div>
+    <button class="btn" id="btnCntClear" type="button">クリア</button>
+  </div>
   <!-- ① 製品を選ぶ -->
   <section id="viewList" class="view">
     <input id="search" type="search" placeholder="製品名・品番で探す" autocomplete="off">
@@ -74,6 +79,7 @@
       <button id="btnNext" class="btn primary big">次の容器へ</button>
       <button id="btnRetake" class="btn">撮り直す</button>
       <button id="btnEndTry" class="btn" hidden>設定に戻る</button>
+      <button id="btnUncount" class="btn" hidden>数えない（−1）</button>
     </div>
   </section>
 

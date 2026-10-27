@@ -222,3 +222,11 @@ input[type=search], .field input {
 .flash.fail { background: rgba(255,59,48,.55); }
 .flash.on { animation: flash .7s ease-out; }
 @keyframes flash { 0% { opacity: 1; } 100% { opacity: 0; } }
+
+/* 合格数（日産数量との照合用） */
+.counter { display: flex; align-items: center; gap: 12px; margin: 0 0 10px; padding: 8px 12px; border-radius: 12px; background: var(--good-soft); border: 1px solid var(--good); }
+.counter .cnt-text { flex: 1; min-width: 0; }
+.counter .cnt-main { font-size: 15px; color: var(--good); font-weight: bold; }
+.counter .cnt-main b { font-size: 32px; line-height: 1.1; margin: 0 2px; font-variant-numeric: tabular-nums; }
+.counter small { display: block; font-size: 12px; color: var(--text-2); }
+.counter .btn { flex: none; }

@@ -11,7 +11,7 @@
      配布用に 見本データ.js を書き出してアプリのフォルダに入れると、開いた時点で見本が入る（手元より新しければ置き換え）。
    ============================================================ */
 
-const APP_VERSION = '20261027-5';
+const APP_VERSION = '20261027-6';
 const DATA_FILE = '見本データ.json';  // スマホどうしの受け渡し用
 const BUNDLE_FILE = '見本データ.js'; // 配布するアプリに同梱する用
 const { $, esc, showError, showInfo, hideBanners, download } = AppKit.ui;
@@ -77,6 +77,7 @@ function showView(name) {
   $('#btnBack').hidden = !v.parent;
   $('#btnAdmin').hidden = name !== 'list';
   hideBanners();
+  renderCount();
   window.scrollTo(0, 0);
 }
 function go(name) { history.pushState({ v: name }, ''); showView(name); }
@@ -158,7 +159,8 @@ function drawMarks(el, items, answers, areas, states, anchor, cls = 'area') {
 function productButton(p, attrs) {
   const img = p.image ? `<img src="${p.image}" alt="">` : '<span class="noimg">写真なし</span>';
   const m = methodOf(p);
-  const how = [m === 'color' ? '色で判定' : m === 'compare' ? '自動判定' : '', p.items.length ? `目視 ${p.items.length} 項目` : ''].filter(Boolean).join('・');
+  const how = [m === 'color' ? '色で判定' : m === 'compare' ? '自動判定' : '', p.items.length ? `目視 ${p.items.length} 項目` : '',
+    count && count.productId === p.id && attrs.startsWith('data-id') ? `合格 ${count.pass} 個` : ''].filter(Boolean).join('・');
   return `<button class="product" ${attrs}>${img}<span class="p-text"><b>${esc(p.name)}</b>` +
     `<small>${esc(p.code || '')}${p.code ? '　' : ''}${how}</small></span><span class="chev">›</span></button>`;
 }
@@ -176,8 +178,65 @@ $('#search').addEventListener('input', renderList);
 $('#productList').addEventListener('click', e => {
   const b = e.target.closest('.product'); if (!b) return;
   const p = data.products.find(x => x.id === b.dataset.id); if (!p) return;
+  // 別の製品に切り替えるときは、数えていた合格数をクリアする（数えていれば確認する）
+  if (count && count.productId !== p.id && (count.pass || count.fail) &&
+      !confirm(`「${count.name}」の合格数（${count.pass} 個）をクリアして、「${p.name}」に切り替えますか？`)) return;
+  if (!count || count.productId !== p.id) { count = newCount(p); saveCount(); }
   checking.product = p; checking.test = false;
   go('shoot'); startShoot();
+});
+
+/* ---------- 合格数（日産数量との照合用） ----------
+   製品を選んでチェックしている間の、合格の数（と不合格の回数）。iPhone に保存し、アプリを閉じても消えない。
+   消えるのは「クリア」ボタンを押したときと、別の製品に切り替えたときだけ（どちらも確認してから）。判定を試すでは数えない。
+   1 回のチェック（結果の画面）で数えるのは 1 回だけ。結果が変わったら（目視の NG など）数え直す。
+   同じ容器を撮り直して二重に数えたときは、結果の画面の「数えない（−1）」で戻す */
+const COUNT_KEY = 'housou-check-count';
+let count = loadCount();
+function loadCount() {
+  try { const c = JSON.parse(localStorage.getItem(COUNT_KEY)); if (c && c.productId) return c; } catch (e) { /* 読めなければ 0 から */ }
+  return null;
+}
+function saveCount() {
+  try { if (count) localStorage.setItem(COUNT_KEY, JSON.stringify(count)); else localStorage.removeItem(COUNT_KEY); } catch (e) { /* 保存できなくても数えることは続ける */ }
+}
+function newCount(p) { return { productId: p.id, name: p.name, pass: 0, fail: 0, since: new Date().toISOString() }; }
+const counting = () => !!(count && checking.product && !checking.test && count.productId === checking.product.id);
+// 結果の画面の判定（'pass' / 'fail' / それ以外）に合わせて数える
+function syncCount(state) {
+  if (!counting() || checking.noCount) return;
+  state = state === 'pass' || state === 'fail' ? state : null;
+  if (state === checking.countState) return;
+  if (checking.countState) count[checking.countState] = Math.max(0, count[checking.countState] - 1);
+  if (state) count[state]++;
+  checking.countState = state;
+  saveCount();
+  renderCount();
+}
+function renderCount() {
+  const el = $('#counter'), show = (current === 'shoot' || current === 'check') && counting();
+  el.hidden = !show;
+  $('#btnUncount').hidden = !(show && current === 'check' && checking.countState === 'pass');
+  if (!show) return;
+  $('#cntPass').textContent = count.pass;
+  const d = new Date(count.since), hm = `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
+  $('#cntSub').textContent = `不合格 ${count.fail} 回 ／ ${hm} から`;
+}
+$('#btnCntClear').addEventListener('click', () => {
+  if (!counting()) return;
+  if ((count.pass || count.fail) && !confirm(`合格数（${count.pass} 個）と不合格の回数（${count.fail} 回）をクリアして、0 から数え直しますか？`)) return;
+  count = newCount(checking.product);
+  checking.countState = null;
+  saveCount();
+  renderCount();
+});
+$('#btnUncount').addEventListener('click', () => {
+  if (!counting() || checking.countState !== 'pass') return;
+  count.pass = Math.max(0, count.pass - 1);
+  checking.countState = null; checking.noCount = true; // この結果の画面では、もう数えない
+  saveCount();
+  renderCount();
+  showInfo('この容器は数えませんでした（合格数を 1 つ戻しました）。');
 });
 
 /* ---------- ② 撮影 ---------- */
@@ -351,12 +410,30 @@ function notify(verdict) {
   });
 }
 
+$('#btnPhoto').addEventListener('click', () => $('#photoInput').click());
+$('#btnPick').addEventListener('click', () => $('#pickInput').click());
+['#photoInput', '#pickInput'].forEach(sel => $(sel).addEventListener('change', () => {
+  const f = $(sel).files[0]; $(sel).value = '';
+  if (f) usePhotoFile(f);
+}));
+// 撮った写真・保存してある写真で判定する（パソコンで試すときは、スマホで撮った写真を選ぶかドロップする）
+async function usePhotoFile(f) {
+  if (!f.type.startsWith('image/')) { showError('写真（画像）のファイルを選んでください。'); return; }
+  stopCamera();
+  // 見本と見比べる自動判定のときは、見本と同じ縦横比に中央を切り出して比べる（色で判定は目印を探すので切り出さない）
+  const m = methodOf(checking.product), crop = m === 'compare';
+  try { checking.shot = await fileToJpeg(f, 1280, crop ? checking.ar : null); checking.aligned = crop || m === 'color'; openCheck(); }
+  catch (e) { showError(e.message); }
+}
+$('#btnNoPhoto').addEventListener('click', () => { checking.shot = null; openCheck(); });
+
 /* ---------- ③ 見比べてチェック ---------- */
 // pre：自動判定で決めたときの判定結果（その映像で判定し直さない）
 function openCheck(pre) {
   const p = checking.product;
   checking.answers = p.items.map(() => null);
   checking.auto = null;
+  checking.countState = null; checking.noCount = false;
   // 撮影 → チェックは「戻る」で撮影へ戻れるよう、履歴を置き換える
   history.replaceState({ v: 'check' }, '');
   showView('check');
@@ -470,6 +547,7 @@ function renderCheck() {
   } else {
     r.className = 'result pass'; r.innerHTML = '<div class="r-big">合格</div><div class="r-sub">すべての項目が OK です</div>';
   }
+  syncCount(r.classList.contains('pass') ? 'pass' : r.classList.contains('fail') ? 'fail' : null);
 }
 // 判定がある場所の名前を並べる（例：①充シール、③Lot）
 const namesWith = (areas, auto, verdict) => esc(areas.map((a, i) => auto.areas[i] && auto.areas[i].verdict === verdict ? areaName(a, i) : '').filter(Boolean).join('、'));
