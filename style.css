@@ -215,8 +215,10 @@ input[type=search], .field input {
 
 .footer { text-align: center; color: var(--text-3); font-size: 11px; padding: 16px 12px 24px; }
 
-/* 自動判定：映像の上の案内と、合格のときに画面を緑に光らせる */
+/* 自動判定：映像の上の案内と、判定が出たときに画面を光らせる（合格は緑、不合格は赤） */
 .live-status { position: absolute; left: 8px; right: 8px; bottom: 8px; padding: 6px 10px; border-radius: 8px; background: rgba(0,0,0,.6); color: #fff; font-size: 13px; text-align: center; pointer-events: none; }
-.pass-flash { position: fixed; inset: 0; z-index: 50; pointer-events: none; background: rgba(52,199,89,.55); opacity: 0; }
-.pass-flash.on { animation: pass-flash .7s ease-out; }
-@keyframes pass-flash { 0% { opacity: 1; } 100% { opacity: 0; } }
+.flash { position: fixed; inset: 0; z-index: 50; pointer-events: none; opacity: 0; }
+.flash.pass { background: rgba(52,199,89,.55); }
+.flash.fail { background: rgba(255,59,48,.55); }
+.flash.on { animation: flash .7s ease-out; }
+@keyframes flash { 0% { opacity: 1; } 100% { opacity: 0; } }

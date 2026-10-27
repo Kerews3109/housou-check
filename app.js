@@ -11,7 +11,7 @@
      配布用に 見本データ.js を書き出してアプリのフォルダに入れると、開いた時点で見本が入る（手元より新しければ置き換え）。
    ============================================================ */
 
-const APP_VERSION = '20261027-4';
+const APP_VERSION = '20261027-5';
 const DATA_FILE = '見本データ.json';  // スマホどうしの受け渡し用
 const BUNDLE_FILE = '見本データ.js'; // 配布するアプリに同梱する用
 const { $, esc, showError, showInfo, hideBanners, download } = AppKit.ui;
@@ -314,9 +314,16 @@ async function autoTick() {
   } finally { auto.busy = false; }
 }
 
-/* 合格の知らせ：音（ピロン）・振動・画面を緑に光らせる
+/* 判定の知らせ
+   合格：高い音「ピロン」・画面を緑に光らせる・短く振動
+   不合格：低い音「ブッブー」・画面を赤く光らせる・長めに 2 回振動（合格と聞き分けられるように）
    iPhone の Safari は、画面のタップのあとでないと音を出せないため、タップのたびに音の準備をしておく。
+   ※ iPhone の消音モードのときは、音が出ないことがある（ブラウザの中で音を作る方法のため）
    振動は、ブラウザから振動できる端末（Android など）だけ（iPhone の Safari は振動できない） */
+const SOUNDS = {
+  pass: { wave: 'sine', vol: 0.4, tones: [[880, 0, 0.2], [1320, 0.12, 0.2]] },         // [周波数, 始まり（秒）, 長さ（秒）]
+  fail: { wave: 'square', vol: 0.15, tones: [[220, 0, 0.22], [220, 0.3, 0.38]] },
+};
 let audioCtx = null;
 function unlockAudio() {
   try {
@@ -325,38 +332,24 @@ function unlockAudio() {
   } catch (e) { audioCtx = null; }
 }
 ['touchend', 'click'].forEach(t => document.addEventListener(t, unlockAudio, { passive: true }));
-function notifyPass() {
-  if (navigator.vibrate) navigator.vibrate(200);
-  const f = $('#passFlash');
-  f.classList.remove('on'); void f.offsetWidth; f.classList.add('on');
+function notify(verdict) {
+  if (verdict !== 'pass' && verdict !== 'fail') return; // 判定できないときは知らせない
+  if (navigator.vibrate) navigator.vibrate(verdict === 'pass' ? 200 : [300, 150, 300]);
+  const f = $('#flash');
+  f.className = 'flash'; void f.offsetWidth; f.className = 'flash on ' + verdict;
   if (!audioCtx) return;
-  const t = audioCtx.currentTime;
-  [[880, 0], [1320, 0.12]].forEach(([hz, dt]) => {
+  const sd = SOUNDS[verdict], t = audioCtx.currentTime;
+  sd.tones.forEach(([hz, dt, dur]) => {
     const o = audioCtx.createOscillator(), g = audioCtx.createGain();
-    o.type = 'sine'; o.frequency.value = hz;
+    o.type = sd.wave; o.frequency.value = hz;
     g.gain.setValueAtTime(0.0001, t + dt);
-    g.gain.exponentialRampToValueAtTime(0.4, t + dt + 0.01);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + dt + 0.2);
+    g.gain.exponentialRampToValueAtTime(sd.vol, t + dt + 0.01);
+    if (sd.wave === 'square') g.gain.setValueAtTime(sd.vol, t + dt + dur - 0.02); // ブザーは同じ大きさで鳴らし続ける
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dt + dur);
     o.connect(g).connect(audioCtx.destination);
-    o.start(t + dt); o.stop(t + dt + 0.22);
+    o.start(t + dt); o.stop(t + dt + dur + 0.02);
   });
 }
-$('#btnPhoto').addEventListener('click', () => $('#photoInput').click());
-$('#btnPick').addEventListener('click', () => $('#pickInput').click());
-['#photoInput', '#pickInput'].forEach(sel => $(sel).addEventListener('change', () => {
-  const f = $(sel).files[0]; $(sel).value = '';
-  if (f) usePhotoFile(f);
-}));
-// 撮った写真・保存してある写真で判定する（パソコンで試すときは、スマホで撮った写真を選ぶかドロップする）
-async function usePhotoFile(f) {
-  if (!f.type.startsWith('image/')) { showError('写真（画像）のファイルを選んでください。'); return; }
-  stopCamera();
-  // 見本と見比べる自動判定のときは、見本と同じ縦横比に中央を切り出して比べる（色で判定は目印を探すので切り出さない）
-  const m = methodOf(checking.product), crop = m === 'compare';
-  try { checking.shot = await fileToJpeg(f, 1280, crop ? checking.ar : null); checking.aligned = crop || m === 'color'; openCheck(); }
-  catch (e) { showError(e.message); }
-}
-$('#btnNoPhoto').addEventListener('click', () => { checking.shot = null; openCheck(); });
 
 /* ---------- ③ 見比べてチェック ---------- */
 // pre：自動判定で決めたときの判定結果（その映像で判定し直さない）
@@ -371,13 +364,13 @@ function openCheck(pre) {
   const m = methodOf(p);
   if (pre) {
     checking.auto = pre;
-    if (pre.verdict === 'pass') notifyPass();
+    notify(pre.verdict);
   } else if (m && checking.shot) {
     checking.auto = 'pending';
     const token = ++checking.token;
     (m === 'color' ? ColorJudge.judge(checking.shot, p.color) : Judge.judge(checking.shot, checking.ar, okSamples(p), p.auto.ng, areasOf(p)))
       .catch(e => ({ verdict: 'unsure', why: 'error', message: e.message, areas: [] }))
-      .then(r => { if (token === checking.token) { checking.auto = r; renderCheck(); if (r.verdict === 'pass') notifyPass(); } });
+      .then(r => { if (token === checking.token) { checking.auto = r; renderCheck(); notify(r.verdict); } });
   }
   renderCheck();
 }
