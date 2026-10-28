@@ -39,6 +39,18 @@
 
   <!-- ② 撮影 -->
   <section id="viewShoot" class="view" hidden>
+    <div class="container-bar" id="containerBar" hidden>
+      <span id="containerNo"></span>
+      <button class="btn" id="btnQrManual" type="button">番号を手で入れる</button>
+      <button class="btn" id="btnQrReset" type="button">読み直す</button>
+    </div>
+    <div class="qr-stop" id="qrStop" hidden>
+      <div class="qs-msg" id="qrStopMsg"></div>
+      <div class="actions">
+        <button class="btn primary" id="btnQrNext" type="button">次の容器へ（QR を読み直す）</button>
+        <button class="btn" id="btnQrAgain" type="button">この容器をもう一度チェックする</button>
+      </div>
+    </div>
     <div class="stage" id="stage">
       <video id="video" playsinline muted autoplay></video>
       <div class="ghost" id="ghost"><img id="ghostImg" alt=""><div class="marks" id="ghostMarks"></div></div>
@@ -111,6 +123,8 @@
     <div class="card">
       <label class="field"><span>製品名 <em>必須</em></span><input id="edName" type="text" placeholder="例：〇〇液 18L缶"></label>
       <label class="field"><span>品番など（任意）</span><input id="edCode" type="text" placeholder="例：A-1234"></label>
+      <label class="field"><span>品種コード（容器の QR の頭 2 文字）</span><select id="edKind"></select>
+        <small class="sub">設定すると、チェックのたびに先に容器の QR を読みます。違う品種の容器や、今日すでにチェックした容器は止めます。</small></label>
     </div>
     <div class="card">
       <h2>見本の写真（ラベルあり）</h2>
@@ -200,6 +214,7 @@
 
 <script src="common/appkit-ui.js"></script>
 <script src="common/appkit-drop.js"></script>
+<script src="lib/jsQR.js"></script>
 <script src="judge.js"></script>
 <script src="colorjudge.js"></script>
 <script src="見本データ.js"></script>

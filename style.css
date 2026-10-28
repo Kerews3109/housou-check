@@ -230,3 +230,15 @@ input[type=search], .field input {
 .counter .cnt-main b { font-size: 32px; line-height: 1.1; margin: 0 2px; font-variant-numeric: tabular-nums; }
 .counter small { display: block; font-size: 12px; color: var(--text-2); }
 .counter .btn { flex: none; }
+
+/* 容器の QR（容器No.） */
+.container-bar { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; padding: 8px 12px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border); font-size: 14px; }
+.container-bar #containerNo { flex: 1; min-width: 0; }
+.container-bar b { font-size: 20px; letter-spacing: .05em; font-variant-numeric: tabular-nums; }
+.container-bar .btn { flex: none; }
+.qr-stop { margin: 0 0 10px; padding: 14px; border-radius: 12px; background: var(--bad-soft); border: 2px solid var(--bad); }
+.qr-stop.dup { background: var(--warn-soft, #fff4d6); border-color: #d99a00; }
+.qr-stop .qs-msg { font-size: 15px; line-height: 1.6; margin-bottom: 10px; }
+.qr-stop .qs-msg b { display: block; font-size: 20px; color: var(--bad); margin-bottom: 4px; }
+.qr-stop.dup .qs-msg b { color: #a06d00; }
+.result .r-no { font-size: 14px; opacity: .9; margin-bottom: 2px; }

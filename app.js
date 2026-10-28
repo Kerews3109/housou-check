@@ -11,7 +11,7 @@
      配布用に 見本データ.js を書き出してアプリのフォルダに入れると、開いた時点で見本が入る（手元より新しければ置き換え）。
    ============================================================ */
 
-const APP_VERSION = '20261027-6';
+const APP_VERSION = '20261027-8';
 const DATA_FILE = '見本データ.json';  // スマホどうしの受け渡し用
 const BUNDLE_FILE = '見本データ.js'; // 配布するアプリに同梱する用
 const { $, esc, showError, showInfo, hideBanners, download } = AppKit.ui;
@@ -179,36 +179,66 @@ $('#productList').addEventListener('click', e => {
   const b = e.target.closest('.product'); if (!b) return;
   const p = data.products.find(x => x.id === b.dataset.id); if (!p) return;
   // 別の製品に切り替えるときは、数えていた合格数をクリアする（数えていれば確認する）
-  if (count && count.productId !== p.id && (count.pass || count.fail) &&
-      !confirm(`「${count.name}」の合格数（${count.pass} 個）をクリアして、「${p.name}」に切り替えますか？`)) return;
+  if (count && count.productId !== p.id && (passCount() || count.fail) &&
+      !confirm(`「${count.name}」の合格数（${passCount()} 個）をクリアして、「${p.name}」に切り替えますか？`)) return;
   if (!count || count.productId !== p.id) { count = newCount(p); saveCount(); }
-  checking.product = p; checking.test = false;
+  checking.product = p; checking.test = false; checking.container = null; checking.qrStop = null;
   go('shoot'); startShoot();
 });
 
 /* ---------- 合格数（日産数量との照合用） ----------
    製品を選んでチェックしている間の、合格の数（と不合格の回数）。iPhone に保存し、アプリを閉じても消えない。
-   消えるのは「クリア」ボタンを押したときと、別の製品に切り替えたときだけ（どちらも確認してから）。判定を試すでは数えない。
-   1 回のチェック（結果の画面）で数えるのは 1 回だけ。結果が変わったら（目視の NG など）数え直す。
-   同じ容器を撮り直して二重に数えたときは、結果の画面の「数えない（−1）」で戻す */
+   消えるのは「クリア」ボタンを押したとき・別の製品に切り替えたとき（どちらも確認してから）・日付が変わったとき（自動）。
+   判定を試すでは数えない。1 回のチェック（結果の画面）で数えるのは 1 回だけ。結果が変わったら（目視の NG など）数え直す。
+   品種コードのある製品（容器の QR を読む）：容器ごとに最後の結果を覚え（items）、合格数は「合格した容器の数」。
+     同じ容器を何度チェックしても 1 個と数える。今日チェックした容器No.は、二重チェックを止めるのにも使う
+   品種コードの無い製品：合格の回数を数える。二重に数えたときは、結果の画面の「数えない（−1）」で戻す */
 const COUNT_KEY = 'housou-check-count';
 let count = loadCount();
 function loadCount() {
-  try { const c = JSON.parse(localStorage.getItem(COUNT_KEY)); if (c && c.productId) return c; } catch (e) { /* 読めなければ 0 から */ }
+  try {
+    const c = JSON.parse(localStorage.getItem(COUNT_KEY));
+    if (c && c.productId) return Object.assign({ items: {}, day: dayOf(new Date(c.since || Date.now())) }, c);
+  } catch (e) { /* 読めなければ 0 から */ }
   return null;
 }
 function saveCount() {
   try { if (count) localStorage.setItem(COUNT_KEY, JSON.stringify(count)); else localStorage.removeItem(COUNT_KEY); } catch (e) { /* 保存できなくても数えることは続ける */ }
 }
-function newCount(p) { return { productId: p.id, name: p.name, pass: 0, fail: 0, since: new Date().toISOString() }; }
+function dayOf(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+function newCount(p) { return { productId: p.id, name: p.name, pass: 0, fail: 0, items: {}, since: new Date().toISOString(), day: dayOf(new Date()) }; }
+const byContainer = p => !!(p && p.kind);
+function passCount() {
+  if (!count) return 0;
+  const p = data.products.find(x => x.id === count.productId);
+  return byContainer(p) ? Object.values(count.items).filter(v => v.verdict === 'pass').length : count.pass;
+}
+// 日付が変わっていたら、数え直す（二重チェックの範囲も「その日のうち」）
+function rollDay() {
+  if (!count || count.day === dayOf(new Date())) return;
+  const p = data.products.find(x => x.id === count.productId);
+  if (!p) return;
+  count = newCount(p);
+  saveCount();
+  renderCount();
+  showInfo('日付が変わったので、合格数とチェック済みの容器をクリアしました。');
+}
 const counting = () => !!(count && checking.product && !checking.test && count.productId === checking.product.id);
 // 結果の画面の判定（'pass' / 'fail' / それ以外）に合わせて数える
 function syncCount(state) {
   if (!counting() || checking.noCount) return;
   state = state === 'pass' || state === 'fail' ? state : null;
   if (state === checking.countState) return;
-  if (checking.countState) count[checking.countState] = Math.max(0, count[checking.countState] - 1);
-  if (state) count[state]++;
+  rollDay();
+  if (checking.container) {
+    // 容器ごと：その容器の最後の結果を覚える（判定できないときは前の結果のまま）。不合格は回数も数える
+    if (checking.countState === 'fail') count.fail = Math.max(0, count.fail - 1);
+    if (state === 'fail') count.fail++;
+    if (state) count.items[checking.container] = { at: new Date().toISOString(), verdict: state };
+  } else {
+    if (checking.countState) count[checking.countState] = Math.max(0, count[checking.countState] - 1);
+    if (state) count[state]++;
+  }
   checking.countState = state;
   saveCount();
   renderCount();
@@ -216,15 +246,18 @@ function syncCount(state) {
 function renderCount() {
   const el = $('#counter'), show = (current === 'shoot' || current === 'check') && counting();
   el.hidden = !show;
-  $('#btnUncount').hidden = !(show && current === 'check' && checking.countState === 'pass');
+  $('#btnUncount').hidden = !(show && current === 'check' && checking.countState === 'pass' && !checking.container);
   if (!show) return;
-  $('#cntPass').textContent = count.pass;
+  $('#cntPass').textContent = passCount();
   const d = new Date(count.since), hm = `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
-  $('#cntSub').textContent = `不合格 ${count.fail} 回 ／ ${hm} から`;
+  $('#cntSub').textContent = byContainer(checking.product)
+    ? `チェック済み ${Object.keys(count.items).length} 個（不合格 ${count.fail} 回） ／ ${hm} から`
+    : `不合格 ${count.fail} 回 ／ ${hm} から`;
 }
 $('#btnCntClear').addEventListener('click', () => {
   if (!counting()) return;
-  if ((count.pass || count.fail) && !confirm(`合格数（${count.pass} 個）と不合格の回数（${count.fail} 回）をクリアして、0 から数え直しますか？`)) return;
+  if ((passCount() || count.fail) && !confirm(`合格数（${passCount()} 個）と不合格の回数（${count.fail} 回）をクリアして、0 から数え直しますか？` +
+      (byContainer(checking.product) ? '\nチェック済みの容器の記録も消えます（同じ容器をもう一度チェックできるようになります）。' : ''))) return;
   count = newCount(checking.product);
   checking.countState = null;
   saveCount();
@@ -237,6 +270,124 @@ $('#btnUncount').addEventListener('click', () => {
   saveCount();
   renderCount();
   showInfo('この容器は数えませんでした（合格数を 1 つ戻しました）。');
+});
+
+/* ---------- 容器の QR（容器No.） ----------
+   製品に品種コードがあるとき、ラベルの判定の前に容器の QR を読む（判定を試すでは読まない）。
+   QR の中身は「品種コード 2 文字＋容器の番号 6 桁」の 8 文字（例：E2000460 → 品種 E2（100kg ELEX）・No.000460）
+   ・違う品種の容器 → 「設定していない品種です」で止める（作業者が「次の容器へ」を押すまで進まない）
+   ・今日すでにチェックした容器 → 一旦止めて、もう一度チェックするか（不合格を貼り直したあとなど）を選んでもらう
+   QR の読み取りは jsQR（lib/jsQR.js、Apache License 2.0）。iPhone の中だけで読み、どこにも送らない */
+const KINDS = { D2: '15kg ELEX', E2: '100kg ELEX', F1: '210kg EL', F3: '200kg 準一級', F4: '230kg ELEX', I1: '190kg ELEX', I2: '190kg ELEX35%', I3: '190kg 高純29%' };
+const kindName = k => KINDS[k] ? `${k}（${KINDS[k]}）` : k;
+function parseNo(t) {
+  const m = /^([A-Z0-9]{2})(\d{6})$/.exec(String(t || '').trim().toUpperCase());
+  return m ? { no: m[0], kind: m[1], num: m[2] } : null;
+}
+const fmtNo = no => `${no.slice(0, 2)}-${no.slice(2)}`;
+const hhmm = iso => { const d = new Date(iso); return `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`; };
+const needQr = () => !!(checking.product && checking.product.kind && !checking.test);
+const waitingQr = () => needQr() && !checking.container;
+const qrLoop = { timer: 0, busy: false };
+function startQr() {
+  stopQr();
+  $('#liveStatus').hidden = false;
+  $('#liveStatus').textContent = '容器の QR を写してください。';
+  qrLoop.timer = setInterval(qrTick, 250);
+}
+function stopQr() { clearInterval(qrLoop.timer); qrLoop.timer = 0; }
+function qrTick() {
+  if (qrLoop.busy) return;
+  if (current !== 'shoot' || !stream) { stopQr(); return; }
+  const v = $('#video'); if (!v.videoWidth) return;
+  qrLoop.busy = true;
+  try {
+    const t = readQr(frameCanvas(v, 800));
+    if (t && !acceptNo(t)) $('#liveStatus').textContent = `容器No. ではない QR です（${t.slice(0, 20)}）。容器の QR を写してください。`;
+  } catch (e) { /* 次の映像で読み直す */ } finally { qrLoop.busy = false; }
+}
+function readQr(c) {
+  const d = c.getContext('2d').getImageData(0, 0, c.width, c.height);
+  const r = jsQR(d.data, c.width, c.height, { inversionAttempts: 'dontInvert' });
+  return r && r.data ? r.data : '';
+}
+// 写真（ファイル）から QR を読む。大きめで読めなければ、縮めて読み直す
+async function readQrFromFile(f) {
+  const url = URL.createObjectURL(f);
+  try {
+    const im = await loadImage(url);
+    for (const max of [1600, 800]) {
+      const k = Math.min(1, max / Math.max(im.naturalWidth, im.naturalHeight)), c = document.createElement('canvas');
+      c.width = Math.round(im.naturalWidth * k); c.height = Math.round(im.naturalHeight * k);
+      c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+      const t = readQr(c);
+      if (t) return t;
+    }
+    return '';
+  } finally { URL.revokeObjectURL(url); }
+}
+// 読んだ容器No.を確かめる。容器No.の形でなければ false
+function acceptNo(text) {
+  const n = parseNo(text), p = checking.product;
+  if (!n) return false;
+  stopQr();
+  rollDay();
+  const done = counting() && count.items[n.no];
+  if (n.kind !== p.kind) checking.qrStop = { type: 'kind', n };
+  else if (done) checking.qrStop = { type: 'dup', n, done };
+  if (checking.qrStop) { play('fail'); renderQr(); return true; }
+  setContainer(n.no);
+  return true;
+}
+function setContainer(no) {
+  checking.container = no; checking.qrStop = null;
+  play('read');
+  renderQr();
+  if (checking.live) startAuto();
+}
+// 容器の QR を読むところから始める
+function startQrStage() {
+  checking.container = null; checking.qrStop = null;
+  stopAuto();
+  renderQr();
+  if (checking.live) startQr();
+}
+function renderQr() {
+  const p = checking.product, use = needQr(), wait = waitingQr(), stop = checking.qrStop;
+  $('#containerBar').hidden = !use;
+  if (use) {
+    $('#containerNo').innerHTML = checking.container ? `容器No. <b>${fmtNo(checking.container)}</b>` : `① 容器の QR を読んでください（${esc(kindName(p.kind))}）`;
+    $('#btnQrReset').hidden = !checking.container;
+    $('#btnQrManual').hidden = !!checking.container;
+  }
+  const qs = $('#qrStop');
+  qs.hidden = !stop;
+  if (stop) {
+    qs.className = 'qr-stop ' + stop.type;
+    $('#qrStopMsg').innerHTML = stop.type === 'kind'
+      ? `<b>設定していない品種です</b>読んだ容器：${fmtNo(stop.n.no)}（${esc(kindName(stop.n.kind))}）<br>この製品：${esc(kindName(p.kind))}`
+      : `<b>この容器はチェック済みです</b>${fmtNo(stop.n.no)} ／ ${hhmm(stop.done.at)} に${stop.done.verdict === 'pass' ? '合格' : '不合格'}`;
+    $('#btnQrAgain').hidden = stop.type !== 'dup';
+    $('#liveStatus').hidden = true;
+  }
+  // QR を読むまでは、ラベルの判定に使うもの（見本の重ね・撮影ボタンなど）を出さない
+  $('#ghost').hidden = wait || !p.image;
+  $('#ghostCtl').hidden = wait || !p.image || !checking.live;
+  $('#btnShutter').hidden = wait || !checking.live;
+  $('#btnNoPhoto').hidden = wait;
+  $('#btnPhoto').textContent = wait ? 'QR を撮影' : 'カメラで撮影';
+  $('#btnPick').querySelector('b').textContent = wait ? '保存した写真から QR を読む' : '保存した写真で判定する';
+  if (use) $('#shootHint').textContent = stop ? '' : wait
+    ? (checking.live ? '容器の QR を写してください。読み取ると「ピッ」と鳴ります。' : '「QR を撮影」で容器の QR を撮ってください。')
+    : (checking.live && methodOf(p) === 'color' ? '② ラベルを写すと、自動で判定します。決まらないときは「撮影」を押してください。' : '② ラベルを撮影してください。');
+}
+$('#btnQrReset').addEventListener('click', startQrStage);
+$('#btnQrNext').addEventListener('click', startQrStage);
+$('#btnQrAgain').addEventListener('click', () => { if (checking.qrStop) setContainer(checking.qrStop.n.no); });
+$('#btnQrManual').addEventListener('click', () => {
+  const t = prompt('容器No.（QR の下の 8 文字。例：E2000460）を入れてください。');
+  if (t == null) return;
+  if (!acceptNo(t)) showError('容器No. として読めません。品種 2 文字＋番号 6 桁の 8 文字で入れてください（例：E2000460）。');
 });
 
 /* ---------- ② 撮影 ---------- */
@@ -259,8 +410,11 @@ async function startShoot() {
   drawMarks($('#ghostMarks'), p.items, null, judgeAreas(p), null, methodOf(p) === 'color' ? p.color.anchor.box : null, methodOf(p) === 'color' ? 'carea' : 'area');
   applyOpacity();
 
+  rollDay();
   const live = await startCamera();
-  if (live) startAuto();
+  checking.live = live;
+  if (live && !waitingQr()) startAuto();
+  if (live && waitingQr() && !checking.qrStop) startQr();
   $('#btnShutter').hidden = !live;
   $('#btnPhoto').hidden = live;
   $('#video').hidden = !live;
@@ -278,6 +432,7 @@ async function startShoot() {
     msg.textContent = 'この開き方ではカメラを画面に映せません。下の「カメラで撮影」から撮ってください。';
     $('#shootHint').textContent = '見本と同じ向き・距離で撮ってください。';
   }
+  renderQr();
 }
 async function startCamera() {
   stopCamera();
@@ -299,6 +454,7 @@ async function startCamera() {
 }
 function stopCamera() {
   stopAuto();
+  stopQr();
   if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
   $('#video').srcObject = null;
 }
@@ -380,6 +536,7 @@ async function autoTick() {
    ※ iPhone の消音モードのときは、音が出ないことがある（ブラウザの中で音を作る方法のため）
    振動は、ブラウザから振動できる端末（Android など）だけ（iPhone の Safari は振動できない） */
 const SOUNDS = {
+  read: { wave: 'sine', vol: 0.35, tones: [[1760, 0, 0.09]] },                         // QR を読んだ「ピッ」
   pass: { wave: 'sine', vol: 0.4, tones: [[880, 0, 0.2], [1320, 0.12, 0.2]] },         // [周波数, 始まり（秒）, 長さ（秒）]
   fail: { wave: 'square', vol: 0.15, tones: [[220, 0, 0.22], [220, 0.3, 0.38]] },
 };
@@ -396,8 +553,11 @@ function notify(verdict) {
   if (navigator.vibrate) navigator.vibrate(verdict === 'pass' ? 200 : [300, 150, 300]);
   const f = $('#flash');
   f.className = 'flash'; void f.offsetWidth; f.className = 'flash on ' + verdict;
+  play(verdict);
+}
+function play(name) {
   if (!audioCtx) return;
-  const sd = SOUNDS[verdict], t = audioCtx.currentTime;
+  const sd = SOUNDS[name], t = audioCtx.currentTime;
   sd.tones.forEach(([hz, dt, dur]) => {
     const o = audioCtx.createOscillator(), g = audioCtx.createGain();
     o.type = sd.wave; o.frequency.value = hz;
@@ -419,6 +579,15 @@ $('#btnPick').addEventListener('click', () => $('#pickInput').click());
 // 撮った写真・保存してある写真で判定する（パソコンで試すときは、スマホで撮った写真を選ぶかドロップする）
 async function usePhotoFile(f) {
   if (!f.type.startsWith('image/')) { showError('写真（画像）のファイルを選んでください。'); return; }
+  if (waitingQr()) {
+    if (current !== 'shoot') return;
+    try {
+      const t = await readQrFromFile(f);
+      if (!t) showError('写真から QR を読み取れませんでした。QR を大きく、はっきり写してください。');
+      else if (!acceptNo(t)) showError(`容器No. ではない QR です（${t.slice(0, 20)}）。`);
+    } catch (e) { showError(e.message); }
+    return;
+  }
   stopCamera();
   // 見本と見比べる自動判定のときは、見本と同じ縦横比に中央を切り出して比べる（色で判定は目印を探すので切り出さない）
   const m = methodOf(checking.product), crop = m === 'compare';
@@ -547,6 +716,7 @@ function renderCheck() {
   } else {
     r.className = 'result pass'; r.innerHTML = '<div class="r-big">合格</div><div class="r-sub">すべての項目が OK です</div>';
   }
+  if (checking.container) r.insertAdjacentHTML('afterbegin', `<div class="r-no">容器No. ${fmtNo(checking.container)}</div>`);
   syncCount(r.classList.contains('pass') ? 'pass' : r.classList.contains('fail') ? 'fail' : null);
 }
 // 判定がある場所の名前を並べる（例：①充シール、③Lot）
@@ -569,9 +739,13 @@ $('#checklist').addEventListener('click', e => {
   renderCheck();
   if (!checking.answers.includes(null) && wasDone) $('#result').scrollIntoView({ behavior: 'smooth', block: 'center' });
 });
-function retake() { history.replaceState({ v: 'shoot' }, ''); showView('shoot'); startShoot(); }
-$('#btnNext').addEventListener('click', retake);
-$('#btnRetake').addEventListener('click', retake);
+// next：次の容器へ（容器の QR から読み直す）。撮り直すは同じ容器のまま
+function retake(next) {
+  if (next === true) { checking.container = null; checking.qrStop = null; }
+  history.replaceState({ v: 'shoot' }, ''); showView('shoot'); startShoot();
+}
+$('#btnNext').addEventListener('click', () => retake(true));
+$('#btnRetake').addEventListener('click', () => retake(false));
 $('#btnEndTry').addEventListener('click', back);
 
 // 拡大表示
@@ -648,6 +822,10 @@ function openEdit(p) {
   editing.marking = null; editing.areaIdx = null; editing.areaKind = 'auto'; editing.pickAnchor = false; editing.drawStart = null; editing.dirty = false;
   $('#edName').value = editing.p.name;
   $('#edCode').value = editing.p.code || '';
+  $('#edKind').innerHTML = '<option value="">使わない（容器の QR を読まない）</option>' +
+    Object.keys(KINDS).map(k => `<option value="${k}">${esc(kindName(k))}</option>`).join('') +
+    (editing.p.kind && !KINDS[editing.p.kind] ? `<option value="${esc(editing.p.kind)}">${esc(editing.p.kind)}</option>` : '');
+  $('#edKind').value = editing.p.kind || '';
   $('#btnDelete').hidden = editing.isNew;
   go('edit');
   renderEdit();
@@ -687,6 +865,7 @@ function renderEdit() {
 }
 $('#edName').addEventListener('input', () => { editing.dirty = true; });
 $('#edCode').addEventListener('input', () => { editing.dirty = true; });
+$('#edKind').addEventListener('change', () => { editing.dirty = true; });
 $('#edItems').addEventListener('input', e => {
   const li = e.target.closest('.edit-item'); if (!li) return;
   editing.p.items[+li.dataset.i].text = e.target.value; editing.dirty = true;
@@ -939,6 +1118,7 @@ $('#btnSave').addEventListener('click', async () => {
   const p = editing.p;
   p.name = $('#edName').value.trim();
   p.code = $('#edCode').value.trim();
+  p.kind = $('#edKind').value;
   p.items = p.items.map(it => Object.assign(it, { text: it.text.trim() })).filter(it => it.text);
   if (!p.name) { showError('製品名を入れてください。'); $('#edName').focus(); return; }
   if (!p.items.length && !methodOf(p)) { showError('色で判定・見本と見比べる自動判定のどちらかの設定か、目視で確認する項目を1つ以上入れてください。'); renderEdit(); return; }
