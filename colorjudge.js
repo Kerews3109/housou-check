@@ -17,6 +17,15 @@ const ColorJudge = (() => {
   const HUE_TOL = 15;         // 色合いの許す幅（度）
   const MIN_ANCHOR = 0.002;   // 目印として見るかたまりの大きさの下限（写真に対する割合）
   const OUT_MAX = 0.4;        // 場所の四角がこれ以上写真の外にはみ出したら判定できない
+  // なめらかさで見る場所（例：灰色のオーバーキャップ。色ではステンレスと見分けられない）
+  //   キャップがあると、つや消しの面で模様が少ない。無いと、ステンレスの映り込み・ふち・内側の部品で模様が多い
+  const SMOOTH_GRAD = 0.04;   // 明るさの変わり方（となりの点との差の合計）がこれ未満の点を「なめらか」とする
+  // 線は見本との比ではなく、なめらかさそのもので引く（見本の写真によって比が大きく変わったため）。
+  // 実物の写真（2026-10-28、キャップあり 5 枚・なし 7 枚）で、ありは 57%以上、なしは 34%以下だった
+  //   見本を入れ替えて試しても、なしは 36%以下（真上に近い高さから撮った 1 枚を除き、ありは 57%以上）。その真ん中あたりに線を引く
+  const SMOOTH_ON = 0.5;      // なめらかな点がこの割合以上あれば「あり」
+  const SMOOTH_OFF = 0.45;    // この割合以下なら「なし」（間は判定できない）
+  const SMOOTH_MIN = 0.5;     // 見本でなめらかな点がこれ未満の場所は、なめらかさの判定に使えない
   const AVOID_TOL = 30;       // 場所の色を決めるとき、目印の色合いからこの幅（度）の色は選ばない
   const FIT_VERSION = 3;      // 場所の四角の決め方の版（変えたら上げる。アプリは見本の編集を開いたときに測り直す）
   const FIT_MARGIN = 0.1;     // 場所の四角のまわりに、少なくとも目印の幅・高さのこの割合の余白をとる
@@ -44,9 +53,12 @@ const ColorJudge = (() => {
     const c = document.createElement('canvas'); c.width = W; c.height = H;
     const g = c.getContext('2d', { willReadFrequently: true }); g.drawImage(img, 0, 0, W, H);
     const px = g.getImageData(0, 0, W, H).data;
-    const hh = new Float32Array(W * H), ss = new Float32Array(W * H), vv = new Float32Array(W * H);
-    for (let i = 0; i < W * H; i++) { const [a, b, d] = hsv(px[i * 4], px[i * 4 + 1], px[i * 4 + 2]); hh[i] = a; ss[i] = b; vv[i] = d; }
-    const P = { W, H, hh, ss, vv };
+    const hh = new Float32Array(W * H), ss = new Float32Array(W * H), vv = new Float32Array(W * H), ll = new Float32Array(W * H);
+    for (let i = 0; i < W * H; i++) {
+      const [a, b, d] = hsv(px[i * 4], px[i * 4 + 1], px[i * 4 + 2]); hh[i] = a; ss[i] = b; vv[i] = d;
+      ll[i] = (px[i * 4] * 0.299 + px[i * 4 + 1] * 0.587 + px[i * 4 + 2] * 0.114) / 255; // 明るさ（なめらかさを見るのに使う）
+    }
+    const P = { W, H, hh, ss, vv, ll };
     if (!isUrl) return P;
     if (cache.size > 30) cache.delete(cache.keys().next().value);
     cache.set(key, P);
@@ -154,6 +166,22 @@ const ColorJudge = (() => {
     return { x: x0 / P.W, y: y0 / P.H, w: (x1 - x0) / P.W, h: (y1 - y0) / P.H };
   }
 
+  // 四角の中でなめらかな点の割合。out：写真の外にはみ出した割合
+  function smoothRatio(P, r) {
+    let n = 0, t = 0;
+    for (let y = Math.max(1, r.y0); y < Math.min(P.H - 1, r.y1); y++) for (let x = Math.max(1, r.x0); x < Math.min(P.W - 1, r.x1); x++) {
+      const i = y * P.W + x, g = Math.abs(P.ll[i + 1] - P.ll[i - 1]) + Math.abs(P.ll[i + P.W] - P.ll[i - P.W]);
+      t++; if (g < SMOOTH_GRAD) n++;
+    }
+    return { r: n / Math.max(1, t), out: 1 - t / r.area };
+  }
+  /* なめらかさで見る場所を決める：見本の写真の四角（0〜1）の中で、なめらかな点の割合
+     戻り値：{ kind: 'smooth', base（見本でのなめらかさ 0〜1） }。四角は囲んだまま（小さくしない） */
+  async function measureSmooth(src, box) {
+    const P = await prep(src);
+    return { kind: 'smooth', base: smoothRatio(P, pxBox(P, box)).r };
+  }
+
   function pxBox(P, b) {
     const x0 = Math.round(b.x * P.W), y0 = Math.round(b.y * P.H), x1 = Math.round((b.x + b.w) * P.W), y1 = Math.round((b.y + b.h) * P.H);
     return { x0: Math.max(0, x0), y0: Math.max(0, y0), x1: Math.min(P.W, x1), y1: Math.min(P.H, y1), area: Math.max(1, (x1 - x0) * (y1 - y0)) };
@@ -192,6 +220,14 @@ const ColorJudge = (() => {
     const res = cfg.areas.map(a => {
       // 見本で目印に対してどこにあったかを、撮影写真の目印に当てはめる
       const box = { x: A.x + (a.x - an.x) / an.w * A.w, y: A.y + (a.y - an.y) / an.h * A.h, w: a.w / an.w * A.w, h: a.h / an.h * A.h };
+      if (a.color.kind === 'smooth') {
+        const base = a.color.base, on = SMOOTH_ON, off = SMOOTH_OFF;
+        if (base < SMOOTH_MIN) return { verdict: 'unsure', why: 'nobase', ratio: null, base, on, off, box, kind: 'smooth' };
+        const m = smoothRatio(P, pxBox(P, box));
+        if (m.out > OUT_MAX) return { verdict: 'unsure', why: 'out', ratio: m.r, base, on, off, box, kind: 'smooth' };
+        const verdict = m.r >= on ? 'pass' : m.r <= off ? 'fail' : 'unsure';
+        return { verdict, why: verdict === 'pass' ? 'ok' : verdict === 'fail' ? 'missing' : 'mid', ratio: m.r, base, on, off, box, kind: 'smooth' };
+      }
       const base = a.color.base, on = base * ON, off = base * OFF;
       if (base < MIN_BASE) return { verdict: 'unsure', why: 'nobase', ratio: null, base, on, off, box };
       // 目印と同じ色の場所（v20261027-1 で、黄色の映り込みが場所の色に選ばれたもの）は、ラベルが無くても「あり」になりやすいので使わない
@@ -205,5 +241,5 @@ const ColorJudge = (() => {
     return { verdict, why: verdict, anchorBox: A, areas: res };
   }
 
-  return { pickAnchor, measureArea, judge, hueDist, FIT_VERSION, ON, OFF, MIN_BASE, AVOID_TOL };
+  return { pickAnchor, measureArea, measureSmooth, SMOOTH_ON, SMOOTH_OFF, SMOOTH_MIN, judge, hueDist, FIT_VERSION, ON, OFF, MIN_BASE, AVOID_TOL };
 })();

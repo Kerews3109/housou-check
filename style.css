@@ -242,3 +242,8 @@ input[type=search], .field input {
 .qr-stop .qs-msg b { display: block; font-size: 20px; color: var(--bad); margin-bottom: 4px; }
 .qr-stop.dup .qs-msg b { color: #a06d00; }
 .result .r-no { font-size: 14px; opacity: .9; margin-bottom: 2px; }
+
+/* なめらかさで見る場所（オーバーキャップなど） */
+.swatch.smooth { background: linear-gradient(135deg, #c9ccd1, #8d9298); }
+.area-row select { flex: none; font-size: 13px; padding: 4px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); }
+.score .bar.smooth-bar { background: linear-gradient(90deg, var(--bad-soft) 0 45%, var(--warn-soft) 45% 50%, var(--good-soft) 50% 100%); }

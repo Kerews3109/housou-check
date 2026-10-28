@@ -650,9 +650,15 @@ function renderCheck() {
   const sc = $('#score');
   sc.hidden = !(checking.test && auto && auto.areas.length);
   if (!sc.hidden && isColor) {
-    sc.innerHTML = `色の量（見本での量の ${Math.round(ColorJudge.ON * 100)}%以上で「あり」、${Math.round(ColorJudge.OFF * 100)}%以下で「なし」）` +
+    sc.innerHTML = `色の量（見本での量の ${Math.round(ColorJudge.ON * 100)}%以上で「あり」、${Math.round(ColorJudge.OFF * 100)}%以下で「なし」。なめらかさで見る場所は、その行に書いた割合）` +
       auto.areas.map((ar, i) => {
         const name = esc(areaName(areas[i], i)), base = ar.base * 100;
+        if (ar.kind === 'smooth') {
+          if (ar.ratio == null) return `<div class="score-row"><b>${name}</b>：見本でこの場所がなめらかではないため、判定できません</div>`;
+          const sp = Math.min(100, ar.ratio * 100);
+          return `<div class="score-row"><b>${name}</b>　なめらか ${Math.round(ar.ratio * 100)}%（見本 ${Math.round(ar.base * 100)}%。${Math.round(ColorJudge.SMOOTH_ON * 100)}%以上で「あり」、${Math.round(ColorJudge.SMOOTH_OFF * 100)}%以下で「なし」）${ar.why === 'out' ? '（写真の外にはみ出し）' : ''}
+            <div class="bar smooth-bar"><i style="left:${sp}%"></i></div></div>`;
+        }
         if (ar.ratio == null) return `<div class="score-row"><b>${name}</b>：見本でこの色がほとんど無いため、判定できません</div>`;
         const pct = Math.min(100, ar.ratio / Math.max(ar.base, 1e-6) * 100); // 見本での量を 100 としたときの量
         return `<div class="score-row"><b>${name}</b>　${(ar.ratio * 100).toFixed(2)}%（見本 ${base.toFixed(2)}% の ${Math.round(ar.ratio / Math.max(ar.base, 1e-6) * 100)}%）${ar.why === 'out' ? '（写真の外にはみ出し）' : ''}
@@ -694,13 +700,13 @@ function renderCheck() {
     if (!auto) {
       r.className = 'result wait'; r.innerHTML = '<div class="r-big">判定中…</div>';
     } else if (auto.verdict === 'fail' || ng.length) {
-      if (auto.verdict === 'fail') subs.push(areas.length > 1 ? 'ラベルがない場所：' + namesWith(areas, auto, 'fail') : 'ラベルが貼られていません。');
+      if (auto.verdict === 'fail') subs.push(areas.length > 1 ? 'ない場所：' + namesWith(areas, auto, 'fail') : 'ラベルが貼られていません。');
       if (ngText) subs.push(ngText);
       r.className = 'result fail'; r.innerHTML = `<div class="r-big">不合格</div><div class="r-sub">${subs.join('<br>')}</div>`;
     } else if (auto.verdict === 'unsure') {
       r.className = 'result unsure'; r.innerHTML = `<div class="r-big">判定できません</div><div class="r-sub">${unsureText(areas, auto)}</div>`;
     } else {
-      subs.push(areas.length > 1 ? `すべての場所（${areas.length} か所）にラベルがあります。` : 'ラベルがあります。');
+      subs.push(areas.length > 1 ? `すべての場所（${areas.length} か所）が OK です。` : 'ラベルがあります。');
       if (p.items.length && left) subs.push(`目視の項目もあれば確認してください（未チェック ${left} 件）`);
       r.className = 'result pass'; r.innerHTML = `<div class="r-big">合格</div><div class="r-sub">${subs.join('<br>')}</div>`;
     }
@@ -1042,8 +1048,14 @@ function drawColorMarks(preview) {
 async function measureColorArea(a) {
   if (!editing.p.image) return;
   const drawn = a.drawn || { x: a.x, y: a.y, w: a.w, h: a.h };
-  const c = await ColorJudge.measureArea(editing.p.image, drawn, editing.p.color.anchor);
   a.drawn = drawn;
+  if (a.look === 'smooth') { // なめらかさで見る場所（キャップなど）：囲んだ四角のまま、なめらかさを測る
+    Object.assign(a, drawn);
+    a.color = await ColorJudge.measureSmooth(editing.p.image, drawn); a.fitv = ColorJudge.FIT_VERSION;
+    renderEdit();
+    return;
+  }
+  const c = await ColorJudge.measureArea(editing.p.image, drawn, editing.p.color.anchor);
   if (c.fit) Object.assign(a, c.fit);
   delete c.fit;
   a.color = c; a.fitv = ColorJudge.FIT_VERSION;
@@ -1063,10 +1075,13 @@ function renderColor() {
   ba.textContent = editing.pickAnchor ? '選ぶのをやめる' : c.anchor ? '目印を選び直す' : '目印をタップして選ぶ';
   $('#cjAreaList').innerHTML = c.areas.map((a, i) => {
     const on = editing.areaKind === 'color' && editing.areaIdx === i;
-    const amount = a.color ? `${a.color.base ? colorName(a.color.h) + ' ' : ''}${(a.color.base * 100).toFixed(1)}%` : '測っています…';
+    const smooth = a.look === 'smooth';
+    const amount = !a.color ? '測っています…' : smooth ? `なめらか ${Math.round(a.color.base * 100)}%`
+      : `${a.color.base ? colorName(a.color.h) + ' ' : ''}${(a.color.base * 100).toFixed(1)}%`;
     return `<li class="area-row${on ? ' on' : ''}" data-i="${i}">
-      <span class="area-no c">${i + 1}</span>${swatch(a.color)}
+      <span class="area-no c">${i + 1}</span>${smooth ? '<span class="swatch smooth"></span>' : swatch(a.color)}
       <input type="text" value="${esc(a.name || '')}" placeholder="名前（任意）例：充シール">
+      <select data-look="${i}" title="この場所で見るもの"><option value="color"${smooth ? '' : ' selected'}>色</option><option value="smooth"${smooth ? ' selected' : ''}>なめらかさ</option></select>
       <small class="amount" title="見本でのこの色の量">${amount}</small>
       <button data-redo="${i}">${on ? 'やめる' : '囲み直す'}</button>
       <button class="del" data-adel="${i}">削除</button>
@@ -1084,10 +1099,12 @@ function renderColor() {
   const lack = [!p.image && '見本の写真', !c.anchor && '目印', !c.areas.length && '判定する場所'].filter(Boolean);
   if (!c.anchor && !c.areas.length) { st.className = 'auto-status'; st.textContent = '色で判定は使っていません。'; return; }
   if (lack.length) { st.className = 'auto-status warn'; st.textContent = `色で判定には、あと「${lack.join('」「')}」が必要です。`; return; }
-  const few = c.areas.map((a, i) => a.color && a.color.base < ColorJudge.MIN_BASE ? areaName(a, i) : '').filter(Boolean);
+  const few = c.areas.map((a, i) => a.color && a.color.kind !== 'smooth' && a.color.base < ColorJudge.MIN_BASE ? areaName(a, i) : '').filter(Boolean);
+  const rough = c.areas.map((a, i) => a.color && a.color.kind === 'smooth' && a.color.base < ColorJudge.SMOOTH_MIN ? areaName(a, i) : '').filter(Boolean);
   // 目印と同じ色（例：黄色の映り込み）が場所の色になっていると、ラベルが無くても「あり」になりやすい（v20261027-1 で登録した場所）
-  const same = c.areas.map((a, i) => a.color && a.color.base && ColorJudge.hueDist(a.color.h, c.anchor.h) <= ColorJudge.AVOID_TOL ? areaName(a, i) : '').filter(Boolean);
+  const same = c.areas.map((a, i) => a.color && a.color.kind !== 'smooth' && a.color.base && ColorJudge.hueDist(a.color.h, c.anchor.h) <= ColorJudge.AVOID_TOL ? areaName(a, i) : '').filter(Boolean);
   if (same.length) { st.className = 'auto-status warn'; st.textContent = `目印と同じ色が、場所の色として選ばれています：${same.join('、')}。「囲み直す」で囲み直してください。`; return; }
+  if (rough.length) { st.className = 'auto-status warn'; st.textContent = `なめらかさで見る場所が、見本の写真でなめらかではありません：${rough.join('、')}。キャップの平らな面だけを囲み直してください。`; return; }
   if (few.length) { st.className = 'auto-status warn'; st.textContent = `色がほとんど無い場所があります：${few.join('、')}。はっきりした色（赤・青など）がある部分を囲み直してください。`; return; }
   if (!colorReady(p)) { st.className = 'auto-status'; st.textContent = '場所の色を測っています…'; return; }
   st.className = 'auto-status ok';
@@ -1104,7 +1121,16 @@ $('#cjAreaList').addEventListener('click', e => {
   if (redo) startArea(+redo.dataset.redo, 'color');
   if (del) { editing.p.color.areas.splice(+del.dataset.adel, 1); editing.areaIdx = null; editing.dirty = true; renderEdit(); }
 });
+$('#cjAreaList').addEventListener('change', e => {
+  const sel = e.target.closest('[data-look]'); if (!sel) return;
+  const a = editing.p.color.areas[+sel.dataset.look];
+  if (sel.value === 'smooth') a.look = 'smooth'; else delete a.look;
+  a.color = null; editing.dirty = true;
+  renderEdit();
+  measureColorArea(a);
+});
 $('#cjAreaList').addEventListener('input', e => {
+  if (e.target.closest('[data-look]')) return;
   const li = e.target.closest('.area-row'); if (!li) return;
   editing.p.color.areas[+li.dataset.i].name = e.target.value.trim(); editing.dirty = true;
 });
