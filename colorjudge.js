@@ -41,7 +41,10 @@ const ColorJudge = (() => {
   //   枠の中の、いちばん大きいグレーのなめらかなかたまりが枠の何割かを測る。見本（真上の写真）での割合に比べて判定する。
   //   キャップの面にはすじや影があるので、なめらかさの線を横から撮るときより、ゆるくする（TOP_GRAD）。
   //   実物の写真（2026-10-28、あり 1 枚・なし 1 枚を寄り・引き・ずれ 7 通りに切り抜き）：ありは枠の 21〜33%、なしは 3〜6%
-  const TOP_GUIDE = { x: 0.15, y: 0.25, w: 0.7, h: 0.5 };
+  // 20261028-8：利用者の要望で、キャップに近づいて撮れるよう枠を大きくした（テスト写真/オーバーキャップ有り見本.jpg くらいの距離。キャップと下のつばが枠に収まる）
+  //   それまでは { x: 0.15, y: 0.25, w: 0.7, h: 0.5 }（引きで撮る必要があった）。枠を変えたら TOP_VERSION を上げる（見本を測り直す）
+  const TOP_GUIDE = { x: 0.04, y: 0.2, w: 0.92, h: 0.6 };
+  const TOP_VERSION = 2;
   const TOP_GRAD = 0.08;
   const TOP_ON = 0.5;         // 見本での割合のこの割合以上なら「あり」
   const TOP_OFF = 0.35;       // この割合以下なら「なし」（間は判定できない）
@@ -51,7 +54,7 @@ const ColorJudge = (() => {
   const TOP_TOUCH = 1;        // かたまりが枠のふちに届いている辺がこの数まで（キャップは枠の中に収まる。床・壁などは枠の外まで続く）
   const TOP_SCALE = 1.5;      // かたまりの幅・高さが、見本の 1/1.5〜1.5 倍の間（撮る距離の違い）
   const TOP_AR = 1.5;         // 幅と高さの倍率の違い（縦横の比の違い）がこの倍まで
-  const TOP_FILL = 0.2;       // 囲む四角の中の埋まり具合の違いがこの差まで
+  const TOP_FILL = 0.35;      // 囲む四角の中の埋まり具合の違いがこの差まで（キャップのベルトの置き方で変わるので、ゆるめ。20261028-7 は 0.2）
   const AVOID_TOL = 30;       // 場所の色を決めるとき、目印の色合いからこの幅（度）の色は選ばない
   const FIT_VERSION = 3;      // 場所の四角の決め方の版（変えたら上げる。アプリは見本の編集を開いたときに測り直す）
   const FIT_MARGIN = 0.1;     // 場所の四角のまわりに、少なくとも目印の幅・高さのこの割合の余白をとる
@@ -315,14 +318,16 @@ const ColorJudge = (() => {
     return { ratio: m.n / r.area, w: m.w / (r.x1 - r.x0), h: m.h / (r.y1 - r.y0), fill: m.n / Math.max(1, m.w * m.h), touch: m.touch };
   }
   // 見本（真上の写真）を測る。戻り値：{ base, w, h, fill, touch }
-  async function measureTop(src) { const m = await topShape(src); return { base: m.ratio, w: m.w, h: m.h, fill: m.fill, touch: m.touch }; }
+  async function measureTop(src) { const m = await topShape(src); return { base: m.ratio, w: m.w, h: m.h, fill: m.fill, touch: m.touch, v: TOP_VERSION }; }
   /* 真上の写真で判定する。cfg：{ base（見本での割合） }
      戻り値：{ verdict, why, ratio, base, on, off } */
   async function judgeTop(shot, cfg) {
+    if (cfg.v !== TOP_VERSION && cfg.image) cfg = Object.assign({}, cfg, await measureTop(cfg.image));
     const base = cfg.base, on = base * TOP_ON, off = base * TOP_OFF;
     if (!(base >= TOP_MIN)) return { verdict: 'unsure', why: 'nobase', ratio: null, base, on, off };
     // 見本のかたまりの形（20261028-6 で登録した見本には無いので、見本の写真から測る）
-    const s = cfg.w ? cfg : cfg.image ? await measureTop(cfg.image) : null;
+    // 枠を変える前（TOP_VERSION が違う）の見本も、見本の写真から測り直す
+    const s = cfg.w && cfg.v === TOP_VERSION ? cfg : cfg.image ? await measureTop(cfg.image) : null;
     const m = await topShape(shot), r = m.ratio;
     const res = (verdict, why) => ({ verdict, why, ratio: r, base, on, off, shape: m });
     if (r <= off) return res('fail', 'missing');
@@ -338,5 +343,5 @@ const ColorJudge = (() => {
       Math.max(kw / kh, kh / kw) <= TOP_AR && Math.abs(m.fill - s.fill) <= TOP_FILL;
   }
 
-  return { pickAnchor, measureArea, measureSmooth, measureGray, measureTop, judgeTop, topShape, TOP_GUIDE, TOP_MIN, TOP_TOUCH, GRAY_ON, GRAY_OFF, GRAY_MIN, SMOOTH_ON, SMOOTH_OFF, SMOOTH_MIN, judge, hueDist, FIT_VERSION, ON, OFF, MIN_BASE, AVOID_TOL };
+  return { pickAnchor, measureArea, measureSmooth, measureGray, measureTop, judgeTop, topShape, TOP_GUIDE, TOP_VERSION, TOP_MIN, TOP_TOUCH, GRAY_ON, GRAY_OFF, GRAY_MIN, SMOOTH_ON, SMOOTH_OFF, SMOOTH_MIN, judge, hueDist, FIT_VERSION, ON, OFF, MIN_BASE, AVOID_TOL };
 })();

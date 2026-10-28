@@ -8,7 +8,7 @@
 <title>包装チェックアプリ</title>
 <!-- アプリの版。版を上げるときは、ここだけを書き換える（app.js もこの値を使う）。
      ファイルは「?v=版」を付けて読むので、版が変われば iPhone も必ず新しいファイルを読む（前の版のファイルと混ざらない） -->
-<meta name="app-version" content="20261028-7">
+<meta name="app-version" content="20261028-8">
 <script>
   document.write(['common/appkit.css', 'style.css'].map(function (f) {
     return '<link rel="stylesheet" href="' + f + '?v=' + document.querySelector('meta[name="app-version"]').content + '">';
@@ -62,7 +62,7 @@
       <video id="video" playsinline muted autoplay></video>
       <div class="ghost" id="ghost"><img id="ghostImg" alt=""><div class="marks" id="ghostMarks"></div></div>
       <div class="marks" id="liveMarks"></div>
-      <div class="top-guide" id="topGuide" hidden><em>容器の口をこの枠に</em></div>
+      <div class="top-guide" id="topGuide" hidden><em>キャップをこの枠いっぱいに</em></div>
       <div class="stage-msg" id="stageMsg" hidden></div>
       <div class="live-status" id="liveStatus" hidden></div>
     </div>
@@ -175,7 +175,7 @@
     <div class="card" id="topCard">
       <h2>真上から撮る写真（オーバーキャップ）<em class="opt">任意</em></h2>
       <p class="sub">設定すると、横からの判定が合格したあと、続けて真上から撮ってオーバーキャップがあるかを判定します。目印は使いません。<br>
-        キャップが付いた容器を、真上から、容器の口が<b>緑の枠の真ん中に大きく</b>写るように撮ってください。チェックのときも、画面の緑の枠に口を合わせてもらいます。</p>
+        キャップが付いた容器を真上から、<b>キャップと下のつばが緑の枠いっぱいに収まる</b>くらいに近づいて撮ってください（枠からはみ出さないように）。チェックのときも、同じくらいの距離で緑の枠に合わせてもらいます。</p>
       <div class="edit-pic" id="edTopWrap">
         <img id="edTopPic" alt="真上の見本写真" hidden>
         <div class="marks" id="edTopMarks"></div>
