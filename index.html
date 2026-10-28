@@ -8,7 +8,7 @@
 <title>包装チェックアプリ</title>
 <!-- アプリの版。版を上げるときは、ここだけを書き換える（app.js もこの値を使う）。
      ファイルは「?v=版」を付けて読むので、版が変われば iPhone も必ず新しいファイルを読む（前の版のファイルと混ざらない） -->
-<meta name="app-version" content="20261028-5">
+<meta name="app-version" content="20261028-6">
 <script>
   document.write(['common/appkit.css', 'style.css'].map(function (f) {
     return '<link rel="stylesheet" href="' + f + '?v=' + document.querySelector('meta[name="app-version"]').content + '">';
@@ -45,6 +45,7 @@
 
   <!-- ② 撮影 -->
   <section id="viewShoot" class="view" hidden>
+    <div class="step-bar" id="stepBar" hidden></div>
     <div class="container-bar" id="containerBar" hidden>
       <span id="containerNo"></span>
       <button class="btn" id="btnQrManual" type="button">番号を手で入れる</button>
@@ -61,6 +62,7 @@
       <video id="video" playsinline muted autoplay></video>
       <div class="ghost" id="ghost"><img id="ghostImg" alt=""><div class="marks" id="ghostMarks"></div></div>
       <div class="marks" id="liveMarks"></div>
+      <div class="top-guide" id="topGuide" hidden><em>容器の口をこの枠に</em></div>
       <div class="stage-msg" id="stageMsg" hidden></div>
       <div class="live-status" id="liveStatus" hidden></div>
     </div>
@@ -86,6 +88,10 @@
     <div class="compare" id="compare">
       <figure><figcaption>見本</figcaption><div class="pic"><img id="cmpSample" alt="見本"><div class="marks" id="cmpSampleMarks"></div></div></figure>
       <figure id="cmpShotFig"><figcaption>撮影した写真</figcaption><div class="pic"><img id="cmpShot" alt="撮影した写真"><div class="marks" id="cmpShotMarks"></div></div></figure>
+    </div>
+    <div class="compare" id="compareTop" hidden>
+      <figure><figcaption>見本（真上）</figcaption><div class="pic"><img id="cmpTopSample" alt="見本（真上）"><div class="marks" id="cmpTopSampleMarks"></div></div></figure>
+      <figure><figcaption>撮影した写真（真上）</figcaption><div class="pic"><img id="cmpTopShot" alt="撮影した写真（真上）"><div class="marks" id="cmpTopShotMarks"></div></div></figure>
     </div>
     <div class="result" id="result" hidden></div>
     <div class="score" id="score" hidden></div>
@@ -158,14 +164,29 @@
         <small>①の目印を選んでから、ボタンを押して、見本写真の上を指でなぞって確かめたい場所を囲み、場所ごとに「見るもの」を選びます。1か所でも無ければ不合格になります。<br>
           ・<b>色</b>（充シール・Lot シールなど）：赤い充シール、白い Lot 枠などを囲みます。囲んだ中で、目印と違う色のうちいちばん多い鮮やかな色を、その場所の色にします。
             四角は、その色のある部分に合わせて自動で小さくなります。ほかのラベル（下の大きなラベルなど）が入らないように囲んでください。<br>
-          ・<b>グレーのキャップ</b>（オーバーキャップ）：キャップが写る、容器の口の上を<b>広めに</b>囲みます（撮る角度で位置が変わるため）。
-            囲んだ中の、いちばん大きいグレーのなめらかなかたまりの大きさで判定します。キャップが無いと、ステンレスや白い部品が見えて、大きなグレーのかたまりができません。
-            チェックのときも、キャップまで写るように撮ってください。</small>
+          ・<b>グレーのキャップ</b>：横の写真でキャップまで見るとき、容器の口の上を<b>広めに</b>囲みます。
+            ※ 横の写真では、ラベルとキャップの両方を写すために離れて撮ることになり、目印が見つかりにくくなります。オーバーキャップは、下の「真上から撮る写真」で見るのがおすすめです。</small>
         <ol class="area-list" id="cjAreaList"></ol>
         <button class="btn" id="btnCjArea">判定する場所を囲む</button>
       </div>
       <div class="auto-status" id="cjStatus"></div>
       <button class="btn primary" id="btnCjTry">判定を試す</button>
+    </div>
+    <div class="card" id="topCard">
+      <h2>真上から撮る写真（オーバーキャップ）<em class="opt">任意</em></h2>
+      <p class="sub">設定すると、横からの判定が合格したあと、続けて真上から撮ってオーバーキャップがあるかを判定します。目印は使いません。<br>
+        キャップが付いた容器を、真上から、容器の口が<b>緑の枠の真ん中に大きく</b>写るように撮ってください。チェックのときも、画面の緑の枠に口を合わせてもらいます。</p>
+      <div class="edit-pic" id="edTopWrap">
+        <img id="edTopPic" alt="真上の見本写真" hidden>
+        <div class="marks" id="edTopMarks"></div>
+        <div class="edit-pic-empty" id="edTopEmpty">写真がありません（真上の判定をしない）</div>
+      </div>
+      <div class="auto-status" id="topStatus"></div>
+      <div class="actions">
+        <button id="btnEdTop" class="btn">真上の写真を撮る・選ぶ</button>
+        <button id="btnEdTopDel" class="btn danger">真上の写真を外す</button>
+      </div>
+      <input id="edTopInput" type="file" accept="image/*" hidden>
     </div>
     <div class="actions sticky-actions">
       <button id="btnSave" class="btn primary big">保存</button>

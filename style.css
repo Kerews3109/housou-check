@@ -256,3 +256,21 @@ input[type=search], .field input {
 
 /* グレーのキャップ（目印の何倍か。0〜1 倍を帯に描く：0.45 倍まで「なし」、0.55 倍から「あり」） */
 .score .bar.gray-bar { background: linear-gradient(90deg, var(--bad-soft) 0 45%, var(--warn-soft) 45% 55%, var(--good-soft) 55% 100%); }
+
+/* 横 → 真上 の段階の表示（撮影の画面の上） */
+.step-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; font-size: 13px; color: var(--text-2); }
+.step-bar span { padding: 4px 10px; border-radius: 999px; background: var(--surface-2); }
+.step-bar span.arrow { background: none; padding: 0; }
+.step-bar span.on { background: #1f6fd1; color: #fff; font-weight: bold; }
+.step-bar span.done { background: #dff3e4; color: #1b7a36; }
+.step-bar .btn { margin-left: auto; padding: 4px 10px; font-size: 13px; }
+/* 真上から撮るときの枠（容器の口を合わせる） */
+.top-guide { position: absolute; border: 3px dashed #3ddc6a; border-radius: 12px; box-sizing: border-box; pointer-events: none; }
+.top-guide em { position: absolute; left: 50%; top: -26px; transform: translateX(-50%); white-space: nowrap; font-style: normal; font-size: 13px; color: #fff; background: rgba(0,0,0,.55); padding: 2px 8px; border-radius: 6px; }
+#compareTop { margin-top: 8px; }
+#topCard h2 .opt { font-style: normal; font-size: 12px; color: var(--text-2); font-weight: normal; margin-left: 6px; }
+.score .bar.top-bar { background: linear-gradient(90deg, var(--bad-soft) 0 35%, var(--warn-soft) 35% 50%, var(--good-soft) 50% 100%); }
+.area.top-mark { border: 3px dashed #2fbf5b; background: none; }
+.area.top-mark.pass, .area.top-mark.fail { border-style: solid; }
+.area.top-mark.pass { border-color: #34c759; }
+.area.top-mark.fail { border-color: var(--mark); }

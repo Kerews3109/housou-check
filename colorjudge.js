@@ -37,6 +37,15 @@ const ColorJudge = (() => {
   const GRAY_OFF = 0.45;      // この倍以下なら「なし」（間は判定できない）
   const GRAY_MIN = 0.6;       // 見本で、かたまりがこの倍未満の場所は使えない（見本でキャップが見つかっていない）
   const GRAY_OUT_MAX = 0.7;   // 広く囲むので、写真の外にはみ出してもよい割合を大きめにする
+  // 真上から撮るオーバーキャップ（2 回目の撮影）：目印は使わず、画面の真ん中の枠（TOP_GUIDE）に容器の口を合わせてもらい、
+  //   枠の中の、いちばん大きいグレーのなめらかなかたまりが枠の何割かを測る。見本（真上の写真）での割合に比べて判定する。
+  //   キャップの面にはすじや影があるので、なめらかさの線を横から撮るときより、ゆるくする（TOP_GRAD）。
+  //   実物の写真（2026-10-28、あり 1 枚・なし 1 枚を寄り・引き・ずれ 7 通りに切り抜き）：ありは枠の 21〜33%、なしは 3〜6%
+  const TOP_GUIDE = { x: 0.15, y: 0.25, w: 0.7, h: 0.5 };
+  const TOP_GRAD = 0.08;
+  const TOP_ON = 0.5;         // 見本での割合のこの割合以上なら「あり」
+  const TOP_OFF = 0.35;       // この割合以下なら「なし」（間は判定できない）
+  const TOP_MIN = 0.12;       // 見本でかたまりが枠のこの割合未満なら、見本でキャップが見つかっていない
   const AVOID_TOL = 30;       // 場所の色を決めるとき、目印の色合いからこの幅（度）の色は選ばない
   const FIT_VERSION = 3;      // 場所の四角の決め方の版（変えたら上げる。アプリは見本の編集を開いたときに測り直す）
   const FIT_MARGIN = 0.1;     // 場所の四角のまわりに、少なくとも目印の幅・高さのこの割合の余白をとる
@@ -187,10 +196,10 @@ const ColorJudge = (() => {
     return { r: n / Math.max(1, t), out: 1 - t / r.area };
   }
   // 四角の中で、グレーのなめらかな点（明るさの変わり方が小さく、色がうすく、暗すぎも明るすぎもしない）がつながった、いちばん大きいかたまりの点の数
-  function grayBlob(P, r) {
+  function grayBlob(P, r, grad = SMOOTH_GRAD) {
     const { W } = P, x0 = Math.max(1, r.x0), x1 = Math.min(P.W - 1, r.x1), y0 = Math.max(1, r.y0), y1 = Math.min(P.H - 1, r.y1);
     const ok = i => P.ss[i] < 0.15 && P.ll[i] > 0.25 && P.ll[i] < 0.8 &&
-      Math.abs(P.ll[i + 1] - P.ll[i - 1]) + Math.abs(P.ll[i + W] - P.ll[i - W]) < SMOOTH_GRAD;
+      Math.abs(P.ll[i + 1] - P.ll[i - 1]) + Math.abs(P.ll[i + W] - P.ll[i - W]) < grad;
     const seen = new Uint8Array(P.W * P.H);
     let best = 0, t = 0;
     for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
@@ -291,5 +300,22 @@ const ColorJudge = (() => {
     return { verdict, why: verdict, anchorBox: A, areas: res };
   }
 
-  return { pickAnchor, measureArea, measureSmooth, measureGray, GRAY_ON, GRAY_OFF, GRAY_MIN, SMOOTH_ON, SMOOTH_OFF, SMOOTH_MIN, judge, hueDist, FIT_VERSION, ON, OFF, MIN_BASE, AVOID_TOL };
+  /* 真上の写真：枠（TOP_GUIDE）の中のいちばん大きいグレーのかたまりが、枠の何割か（0〜1） */
+  async function topRatio(src) {
+    const P = await prep(src), r = pxBox(P, TOP_GUIDE);
+    return grayBlob(P, r, TOP_GRAD).n / r.area;
+  }
+  // 見本（真上の写真）を測る。戻り値：{ base }
+  async function measureTop(src) { return { base: await topRatio(src) }; }
+  /* 真上の写真で判定する。cfg：{ base（見本での割合） }
+     戻り値：{ verdict, why, ratio, base, on, off } */
+  async function judgeTop(shot, cfg) {
+    const base = cfg.base, on = base * TOP_ON, off = base * TOP_OFF;
+    if (!(base >= TOP_MIN)) return { verdict: 'unsure', why: 'nobase', ratio: null, base, on, off };
+    const r = await topRatio(shot);
+    const verdict = r >= on ? 'pass' : r <= off ? 'fail' : 'unsure';
+    return { verdict, why: verdict === 'pass' ? 'ok' : verdict === 'fail' ? 'missing' : 'mid', ratio: r, base, on, off };
+  }
+
+  return { pickAnchor, measureArea, measureSmooth, measureGray, measureTop, judgeTop, TOP_GUIDE, TOP_MIN, GRAY_ON, GRAY_OFF, GRAY_MIN, SMOOTH_ON, SMOOTH_OFF, SMOOTH_MIN, judge, hueDist, FIT_VERSION, ON, OFF, MIN_BASE, AVOID_TOL };
 })();

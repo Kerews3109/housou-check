@@ -132,7 +132,17 @@ const areaName = (a, i) => `${'①②③④⑤⑥⑦⑧⑨⑩'[i] || i + 1}${a.n
    ※ 20261028-5 で「見本と見比べて判定」（judge.js・p.auto）と「目視で確認する項目」（p.items）をやめた（前の版のデータに残っていても使わない） */
 const colorReady = p => !!(p && p.image && p.color && p.color.anchor && p.color.areas && p.color.areas.length && p.color.areas.every(a => a.color));
 const methodOf = p => colorReady(p) ? 'color' : null;
+/* 真上から撮る写真（オーバーキャップ。20261028-6 から。任意）
+   p.top = { image（真上の見本写真）, base（見本で、枠の中のいちばん大きいグレーのかたまりが枠の何割か） }
+   設定があると、横から撮った判定が合格したあと、続けて真上から撮って判定する（目印は使わず、画面の枠に容器の口を合わせてもらう） */
+const topReady = p => !!(p && p.top && p.top.image && p.top.base >= ColorJudge.TOP_MIN);
+const TOP_NAME = 'オーバーキャップ（真上）';
 
+// 真上の写真の枠（容器の口を合わせる枠）を描く。state は 'pass' / 'fail' / 'unsure'
+function drawGuide(el, state) {
+  const g = ColorJudge.TOP_GUIDE;
+  el.innerHTML = `<span class="area top-mark${state ? ' ' + state : ''}" style="left:${g.x * 100}%;top:${g.y * 100}%;width:${g.w * 100}%;height:${g.h * 100}%"></span>`;
+}
 // 写真の上に、目印の枠と判定する場所の四角を描く（x, y は写真に対する 0〜1）。states は場所ごとの 'pass' / 'fail' / 'unsure'
 function drawMarks(el, areas, states, anchor) {
   const pos = b => `left:${b.x * 100}%;top:${b.y * 100}%;width:${b.w * 100}%;height:${b.h * 100}%`;
@@ -146,7 +156,7 @@ function drawMarks(el, areas, states, anchor) {
 function productButton(p, attrs) {
   const img = p.image ? `<img src="${p.image}" alt="">` : '<span class="noimg">写真なし</span>';
   const m = methodOf(p);
-  const how = [m ? '自動判定' : '自動判定の設定なし', count && count.productId === p.id && attrs.startsWith('data-id') ? `合格 ${passCount()} 個` : ''].filter(Boolean).join('・');
+  const how = [m ? (topReady(p) ? '自動判定（横＋真上）' : '自動判定') : '自動判定の設定なし', count && count.productId === p.id && attrs.startsWith('data-id') ? `合格 ${passCount()} 個` : ''].filter(Boolean).join('・');
   return `<button class="product" ${attrs}>${img}<span class="p-text"><b>${esc(p.name)}</b>` +
     `<small>${esc(p.code || '')}${p.code ? '　' : ''}${how}</small></span><span class="chev">›</span></button>`;
 }
@@ -169,6 +179,7 @@ $('#productList').addEventListener('click', e => {
       !confirm(`「${count.name}」の合格数（${passCount()} 個）をクリアして、「${p.name}」に切り替えますか？`)) return;
   if (!count || count.productId !== p.id) { count = newCount(p); saveCount(); }
   checking.product = p; checking.test = false; checking.container = null; checking.qrStop = null;
+  resetSteps();
   go('shoot'); startShoot();
 });
 
@@ -335,6 +346,7 @@ function setContainer(no) {
 function startQrStage() {
   checking.container = null; checking.qrStop = null;
   stopAuto();
+  if (checking.step === 'top') { resetSteps(); startShoot(); return; }
   renderQr();
   if (checking.live) startQr();
 }
@@ -357,15 +369,41 @@ function renderQr() {
     $('#liveStatus').hidden = true;
   }
   // QR を読むまでは、ラベルの判定に使うもの（見本の重ね・撮影ボタンなど）を出さない
-  $('#ghost').hidden = wait || !p.image;
-  $('#ghostCtl').hidden = wait || !p.image || !checking.live;
+  const img = stepImage();
+  $('#ghost').hidden = wait || !img;
+  $('#ghostCtl').hidden = wait || !img || !checking.live;
   $('#btnShutter').hidden = wait || !checking.live;
   $('#btnPhoto').textContent = wait ? 'QR を撮影' : 'カメラで撮影';
   $('#btnPick').querySelector('b').textContent = wait ? '保存した写真から QR を読む' : '保存した写真で判定する';
-  if (use) $('#shootHint').textContent = stop ? '' : wait
+  $('#topGuide').hidden = wait || checking.step !== 'top';
+  renderSteps();
+  $('#shootHint').textContent = stop ? '' : wait
     ? (checking.live ? '容器の QR を写してください。読み取ると「ピッ」と鳴ります。' : '「QR を撮影」で容器の QR を撮ってください。')
-    : (checking.live && methodOf(p) === 'color' ? '② ラベルを写すと、自動で判定します。決まらないときは「撮影」を押してください。' : '② ラベルを撮影してください。');
+    : shootHint();
 }
+// 撮影の画面の説明（今の段階に合わせる）
+function shootHint() {
+  const p = checking.product;
+  if (checking.step === 'top') return checking.live
+    ? '真上から、容器の口（キャップ）を緑の枠に合わせてください。自動で判定します。決まらないときは「撮影」を押してください。'
+    : '真上から、容器の口（キャップ）が真ん中に写るように撮ってください。';
+  const side = topReady(p) ? '横から、' : '';
+  if (!checking.live) return `${side}見本と同じ向き・距離で撮ってください。`;
+  return methodOf(p) === 'color' ? `${side}ラベルを写すと、自動で判定します。決まらないときは「撮影」を押してください。` : '容器を写して、撮影してください。';
+}
+// 横 → 真上 の段階の表示（真上の設定がある製品だけ）
+function renderSteps() {
+  const p = checking.product, el = $('#stepBar');
+  el.hidden = !topReady(p) || waitingQr() || !!checking.qrStop;
+  if (el.hidden) return;
+  const top = checking.step === 'top';
+  el.innerHTML = `<span class="${top ? 'done' : 'on'}">${top ? '✓ ' : ''}横から（ラベル）</span><span class="arrow">→</span><span class="${top ? 'on' : ''}">真上から（キャップ）</span>` +
+    (top ? '<button class="btn" type="button" data-side-again>横から撮り直す</button>' : '');
+}
+$('#stepBar').addEventListener('click', e => {
+  if (!e.target.closest('[data-side-again]')) return;
+  resetSteps(); startShoot();
+});
 $('#btnQrReset').addEventListener('click', startQrStage);
 $('#btnQrNext').addEventListener('click', startQrStage);
 $('#btnQrAgain').addEventListener('click', () => { if (checking.qrStop) setContainer(checking.qrStop.n.no); });
@@ -377,26 +415,37 @@ $('#btnQrManual').addEventListener('click', () => {
 
 /* ---------- ② 撮影 ---------- */
 // test：見本の編集の「判定を試す」から来たとき（保存前の見本で判定する）
-const checking = { product: null, shot: null, aligned: false, test: false, ar: 0.75, auto: null, token: 0 };
+// step：'side'（横から。目印でラベルを判定）→ 'top'（真上から。オーバーキャップ。真上の設定がある製品で、横が合格したとき）
+// sideRes：横の判定結果（真上へ進んだとき）、topShot・topRes：真上の写真と判定結果
+const checking = { product: null, shot: null, aligned: false, test: false, ar: 0.75, auto: null, token: 0, step: 'side', sideRes: null, topShot: null, topRes: null };
 let stream = null;
+function resetSteps() { checking.step = 'side'; checking.sideRes = null; checking.topShot = null; checking.topRes = null; }
+const stepImage = () => checking.step === 'top' ? checking.product.top.image : checking.product.image;
 
 async function startShoot() {
   const p = checking.product; if (!p) { showView('list'); return; }
+  if (checking.step === 'top' && !topReady(p)) resetSteps();
+  const top = checking.step === 'top', img = stepImage();
   $('#title').textContent = checking.test ? '判定を試す' : p.name;
   const stage = $('#stage');
   // 枠の縦横比を見本に合わせる（見本が無ければ 3:4）
   let ar = 0.75;
-  if (p.image) ar = await imageAr(p.image);
+  if (img) ar = await imageAr(img);
   checking.ar = ar;
   stage.style.setProperty('--ar', ar);
-  $('#ghostImg').src = p.image || '';
-  $('#ghost').hidden = !p.image;
-  $('#ghostCtl').hidden = !p.image;
-  drawMarks($('#ghostMarks'), methodOf(p) ? p.color.areas : [], null, methodOf(p) ? p.color.anchor.box : null);
+  $('#ghostImg').src = img || '';
+  $('#ghost').hidden = !img;
+  $('#ghostCtl').hidden = !img;
+  if (top) $('#ghostMarks').innerHTML = '';
+  else drawMarks($('#ghostMarks'), methodOf(p) ? p.color.areas : [], null, methodOf(p) ? p.color.anchor.box : null);
+  const g = ColorJudge.TOP_GUIDE;
+  Object.assign($('#topGuide').style, { left: g.x * 100 + '%', top: g.y * 100 + '%', width: g.w * 100 + '%', height: g.h * 100 + '%' });
   applyOpacity();
 
   rollDay();
-  const live = await startCamera();
+  // 横 → 真上に進むときは、カメラを止めずにそのまま使う（iPhone でカメラを開き直すと時間がかかるため）
+  stopAuto(); stopQr();
+  const live = top && stream ? true : await startCamera();
   checking.live = live;
   if (live && !waitingQr()) startAuto();
   if (live && waitingQr() && !checking.qrStop) startQr();
@@ -406,16 +455,12 @@ async function startShoot() {
   const msg = $('#stageMsg');
   if (live) {
     msg.hidden = true;
-    $('#shootHint').textContent = methodOf(p) === 'color'
-      ? '容器を写すと、自動で判定します。決まらないときは「撮影」を押してください。'
-      : p.image ? '見本の写真に重なるように容器を写して、撮影してください。' : '容器を写して、撮影してください。';
   } else {
     // カメラを画面に映せないとき（https でない場合など）は、見本を表示して撮影ボタンで撮る
     $('#ghost').style.opacity = 1;
     $('#ghostCtl').hidden = true;
-    msg.hidden = !!p.image;
+    msg.hidden = !!img;
     msg.textContent = 'この開き方ではカメラを画面に映せません。下の「カメラで撮影」から撮ってください。';
-    $('#shootHint').textContent = '見本と同じ向き・距離で撮ってください。';
   }
   renderQr();
 }
@@ -456,10 +501,37 @@ function frameCrop(v) {
 $('#btnShutter').addEventListener('click', () => {
   const v = $('#video');
   if (!v.videoWidth) { showError('カメラの準備ができていません。少し待ってからもう一度押してください。'); return; }
-  checking.shot = toJpeg(v, 1280, frameCrop(v));
-  checking.aligned = true;
-  openCheck();
+  stopAuto();
+  judgeStep(toJpeg(v, 1280, frameCrop(v)));
 });
+// 撮影ボタン・保存した写真：今の段階（横／真上）で判定して、次へ進む
+async function judgeStep(shot) {
+  const p = checking.product, st = $('#liveStatus');
+  st.hidden = false; st.textContent = '判定しています…';
+  try {
+    if (checking.step === 'top') topDecided(shot, await ColorJudge.judgeTop(shot, p.top));
+    else sideDecided(shot, await ColorJudge.judge(shot, p.color));
+  } catch (e) {
+    showError('判定できませんでした：' + e.message);
+    if (checking.live && current === 'shoot') startAuto();
+  }
+}
+// 横の判定が決まった：合格で真上の設定があれば真上へ、それ以外は結果へ
+function sideDecided(shot, r) {
+  checking.shot = shot; checking.aligned = true;
+  if (r.verdict === 'pass' && topReady(checking.product)) {
+    checking.sideRes = r; checking.step = 'top'; checking.topShot = null; checking.topRes = null;
+    play('read');
+    if (current !== 'shoot') { history.replaceState({ v: 'shoot' }, ''); showView('shoot'); }
+    startShoot();
+    return;
+  }
+  openCheck(r); // 決めた映像の判定結果をそのまま使う（撮り直して判定し直すと、結果が変わることがあるため）
+}
+function topDecided(shot, r) {
+  checking.topShot = shot; checking.topRes = r;
+  openCheck(checking.sideRes);
+}
 
 /* 自動判定（色で判定で、カメラを画面に映しているとき）
    映像を AUTO_EVERY ミリ秒おきに判定し、同じ結果（場所ごとのあり・なしまで同じ）が続いたら、その映像で決める。
@@ -471,7 +543,7 @@ function startAuto() {
   stopAuto();
   if (methodOf(checking.product) !== 'color') return;
   $('#liveStatus').hidden = false;
-  $('#liveStatus').textContent = '目印（例：黄色い楕円）を探しています…';
+  $('#liveStatus').textContent = checking.step === 'top' ? '容器の口（キャップ）を緑の枠に合わせてください…' : '目印（例：黄色い楕円）を探しています…';
   auto.timer = setInterval(autoTick, AUTO_EVERY);
 }
 function stopAuto() {
@@ -492,22 +564,21 @@ async function autoTick() {
   const v = $('#video'); if (!v.videoWidth) return;
   auto.busy = true;
   try {
-    const p = checking.product, c = frameCanvas(v, 1280);
-    const r = await ColorJudge.judge(c, p.color);
+    const p = checking.product, c = frameCanvas(v, 1280), top = checking.step === 'top';
+    const r = top ? await ColorJudge.judgeTop(c, p.top) : await ColorJudge.judge(c, p.color);
     if (!auto.timer) return; // 判定している間に画面が変わった
-    drawMarks($('#liveMarks'), r.anchorBox ? r.areas.map(a => a.box) : [], r.areas.map(a => a.verdict), r.anchorBox || null);
-    const sig = r.verdict === 'unsure' ? '' : r.verdict + ':' + r.areas.map(a => a.verdict).join(',');
+    if (!top) drawMarks($('#liveMarks'), r.anchorBox ? r.areas.map(a => a.box) : [], r.areas.map(a => a.verdict), r.anchorBox || null);
+    const sig = r.verdict === 'unsure' ? '' : top ? r.verdict : r.verdict + ':' + r.areas.map(a => a.verdict).join(',');
     auto.hist.push(sig);
     if (auto.hist.length > AUTO_FAIL) auto.hist.shift();
     let n = 0; for (let i = auto.hist.length - 1; i >= 0 && auto.hist[i] === sig; i--) n++;
     $('#liveStatus').textContent = r.why === 'noanchor' ? '目印（例：黄色い楕円）を探しています…'
-      : !sig ? 'はっきりしません。目印と判定する場所がはっきり写るようにしてください。'
+      : !sig ? (top ? 'はっきりしません。真上から、容器の口を緑の枠に合わせてください。' : 'はっきりしません。目印と判定する場所がはっきり写るようにしてください。')
       : '判定しています…そのまま動かさないでください。';
     if (sig && n >= (r.verdict === 'pass' ? AUTO_PASS : AUTO_FAIL)) {
       stopAuto();
-      checking.shot = c.toDataURL('image/jpeg', 0.82);
-      checking.aligned = true;
-      openCheck(r); // 決めた映像の判定結果をそのまま使う（撮り直して判定し直すと、結果が変わることがあるため）
+      const shot = c.toDataURL('image/jpeg', 0.82);
+      if (top) topDecided(shot, r); else sideDecided(shot, r);
     }
   } catch (e) {
     // 1 回うまくいかなくても、次の映像で判定し直す
@@ -573,8 +644,9 @@ async function usePhotoFile(f) {
     } catch (e) { showError(e.message); }
     return;
   }
+  if (current === 'check') resetSteps(); // 結果の画面に写真を落としたら、新しい容器として横から
   stopCamera();
-  try { checking.shot = await fileToJpeg(f, 1280); checking.aligned = true; openCheck(); } // 目印を探すので切り出さない
+  try { await judgeStep(await fileToJpeg(f, 1280)); } // 目印を探すので切り出さない
   catch (e) { showError(e.message); }
 }
 
@@ -590,7 +662,7 @@ function openCheck(pre) {
   if (checking.test) $('#title').textContent = '判定を試す';
   if (pre) {
     checking.auto = pre;
-    notify(pre.verdict);
+    notify(finalVerdict(pre));
   } else if (methodOf(p) && checking.shot) {
     checking.auto = 'pending';
     const token = ++checking.token;
@@ -600,10 +672,24 @@ function openCheck(pre) {
   }
   renderCheck();
 }
+// 横の判定と真上の判定を合わせた結果（真上は、横が合格して真上まで撮ったときだけ）
+function finalVerdict(side) {
+  const t = checking.topRes;
+  return side && side.verdict === 'pass' && t ? t.verdict : side ? side.verdict : 'unsure';
+}
 function renderCheck() {
   const p = checking.product, method = methodOf(p);
   const useAuto = !!method && !!checking.shot;
   const auto = useAuto && checking.auto && checking.auto !== 'pending' ? checking.auto : null;
+  const top = auto && auto.verdict === 'pass' ? checking.topRes : null, fin = auto ? finalVerdict(auto) : null;
+  // 真上の写真（見本と並べる。枠の四角を判定の色で描く）
+  $('#compareTop').hidden = !(top && checking.topShot);
+  if (top && checking.topShot) {
+    $('#cmpTopSample').src = p.top.image;
+    $('#cmpTopShot').src = checking.topShot;
+    drawGuide($('#cmpTopSampleMarks'));
+    drawGuide($('#cmpTopShotMarks'), top.verdict);
+  }
   const areas = method ? p.color.areas : [];
   const states = auto ? areas.map((_, i) => auto.areas[i] ? auto.areas[i].verdict : 'unsure') : null;
   $('#cmpSample').src = p.image || '';
@@ -620,6 +706,11 @@ function renderCheck() {
   // 試しの判定では、場所ごとの判定の数字も見せる
   const sc = $('#score');
   sc.hidden = !(checking.test && auto && auto.areas.length);
+  const topRow = !top ? '' : top.ratio == null
+    ? `<div class="score-row"><b>${TOP_NAME}</b>：見本の真上の写真でキャップが見つからないため、判定できません</div>`
+    : `<div class="score-row"><b>${TOP_NAME}</b>　グレーのかたまり 枠の ${Math.round(top.ratio * 100)}%（見本 ${Math.round(top.base * 100)}% の ${Math.round(top.ratio / top.base * 100)}%。` +
+      `${Math.round(top.on * 1000) / 10}%以上で「あり」、${Math.round(top.off * 1000) / 10}%以下で「なし」）
+        <div class="bar top-bar"><i style="left:${Math.min(100, top.ratio / top.base * 100)}%"></i></div></div>`;
   if (!sc.hidden) {
     sc.innerHTML = `色の量（見本での量の ${Math.round(ColorJudge.ON * 100)}%以上で「あり」、${Math.round(ColorJudge.OFF * 100)}%以下で「なし」。グレーのキャップは、その行に書いた大きさ）` +
       auto.areas.map((ar, i) => {
@@ -638,7 +729,7 @@ function renderCheck() {
         const pct = Math.min(100, ar.ratio / Math.max(ar.base, 1e-6) * 100); // 見本での量を 100 としたときの量
         return `<div class="score-row"><b>${name}</b>　${(ar.ratio * 100).toFixed(2)}%（見本 ${base.toFixed(2)}% の ${Math.round(ar.ratio / Math.max(ar.base, 1e-6) * 100)}%）${ar.why === 'out' ? '（写真の外にはみ出し）' : ''}
           <div class="bar color-bar"><i style="left:${pct}%"></i></div></div>`;
-      }).join('') +
+      }).join('') + topRow +
       '<div class="scale color-scale"><span>なし</span><span>判定できない</span><span>あり（見本の量）</span></div>';
   }
   $('#btnNext').textContent = checking.test ? 'もう一度試す' : '次の容器へ';
@@ -653,14 +744,21 @@ function renderCheck() {
     r.className = 'result wait'; r.innerHTML = '<div class="r-big">撮影してください</div><div class="r-sub">「撮り直す」から撮影してください。</div>';
   } else if (!auto) {
     r.className = 'result wait'; r.innerHTML = '<div class="r-big">判定中…</div>';
+  } else if (top && fin === 'fail') {
+    r.className = 'result fail';
+    r.innerHTML = `<div class="r-big">不合格</div><div class="r-sub">ない場所：${TOP_NAME}</div>`;
+  } else if (top && fin === 'unsure') {
+    r.className = 'result unsure';
+    r.innerHTML = `<div class="r-big">判定できません</div><div class="r-sub">${TOP_NAME}：${top.why === 'nobase' ? '見本の真上の写真でキャップが見つかっていません（見本の登録を見直してください）' : 'はっきりしません'}<br>「撮り直す」で、横からもう一度撮ってください。</div>`;
   } else if (auto.verdict === 'fail') {
     r.className = 'result fail';
     r.innerHTML = `<div class="r-big">不合格</div><div class="r-sub">${areas.length > 1 ? 'ない場所：' + namesWith(areas, auto, 'fail') : 'ラベルが貼られていません。'}</div>`;
   } else if (auto.verdict === 'unsure') {
     r.className = 'result unsure'; r.innerHTML = `<div class="r-big">判定できません</div><div class="r-sub">${unsureText(areas, auto)}</div>`;
   } else {
+    const n = areas.length + (top ? 1 : 0);
     r.className = 'result pass';
-    r.innerHTML = `<div class="r-big">合格</div><div class="r-sub">${areas.length > 1 ? `すべての場所（${areas.length} か所）が OK です。` : 'ラベルがあります。'}</div>`;
+    r.innerHTML = `<div class="r-big">合格</div><div class="r-sub">${n > 1 ? `すべての場所（${n} か所${top ? '。真上のキャップを含む' : ''}）が OK です。` : 'ラベルがあります。'}</div>`;
   }
   if (checking.container) r.insertAdjacentHTML('afterbegin', `<div class="r-no">容器No. ${fmtNo(checking.container)}</div>`);
   syncCount(r.classList.contains('pass') ? 'pass' : r.classList.contains('fail') ? 'fail' : null);
@@ -678,6 +776,7 @@ function unsureText(areas, auto) {
 // next：次の容器へ（容器の QR から読み直す）。撮り直すは同じ容器のまま
 function retake(next) {
   if (next === true) { checking.container = null; checking.qrStop = null; }
+  resetSteps();
   history.replaceState({ v: 'shoot' }, ''); showView('shoot'); startShoot();
 }
 $('#btnNext').addEventListener('click', () => retake(true));
@@ -685,12 +784,12 @@ $('#btnRetake').addEventListener('click', () => retake(false));
 $('#btnEndTry').addEventListener('click', back);
 
 // 拡大表示
-$('#compare').addEventListener('click', e => {
+['#compare', '#compareTop'].forEach(sel => $(sel).addEventListener('click', e => {
   const pic = e.target.closest('.pic'); if (!pic) return;
   $('#zoomImg').src = pic.querySelector('img').src;
   $('#zoomMarks').innerHTML = pic.querySelector('.marks').innerHTML;
   $('#zoom').hidden = false;
-});
+}));
 $('#zoom').addEventListener('click', () => { $('#zoom').hidden = true; });
 
 /* ---------- ④ 見本の登録（一覧・ファイル） ---------- */
@@ -747,6 +846,7 @@ function openEdit(p) {
   editing.isNew = !p;
   editing.p = p ? JSON.parse(JSON.stringify(p)) : { id: newId(), name: '', code: '', image: '' };
   editing.p.color = Object.assign({ anchor: null, areas: [] }, editing.p.color);
+  if (editing.p.top && !editing.p.top.image) delete editing.p.top;
   // 20261028-4 までの「なめらかさ」の場所は、グレーのキャップに変えて測り直す
   editing.p.color.areas.forEach(a => { if (a.look === 'smooth') { a.look = 'gray'; delete a.fitv; } });
   editing.areaIdx = null; editing.pickAnchor = false; editing.drawStart = null; editing.dirty = false;
@@ -774,6 +874,7 @@ function renderEdit() {
   $('#edPicEmpty').hidden = !!p.image;
   if (p.image) $('#edPic').src = p.image;
   drawColorMarks();
+  renderTop();
   $('#edPicWrap').classList.toggle('marking', editing.pickAnchor);
   $('#edPicWrap').classList.toggle('drawing', editing.areaIdx != null);
   const hint = $('#edMarkHint');
@@ -953,7 +1054,46 @@ $('#cjAreaList').addEventListener('input', e => {
 $('#btnCjTry').addEventListener('click', () => {
   if (!colorReady(editing.p)) return;
   checking.product = editing.p; checking.test = true;
+  resetSteps();
   go('shoot'); startShoot();
+});
+
+// ---- 真上から撮る写真（オーバーキャップ） ----
+function renderTop() {
+  const t = editing.p.top, el = $('#topStatus');
+  $('#edTopPic').hidden = !t;
+  $('#edTopEmpty').hidden = !!t;
+  $('#btnEdTopDel').hidden = !t;
+  $('#btnEdTop').textContent = t ? '真上の写真を撮り直す・選び直す' : '真上の写真を撮る・選ぶ';
+  if (t) { $('#edTopPic').src = t.image; drawGuide($('#edTopMarks')); } else $('#edTopMarks').innerHTML = '';
+  if (!t) { el.className = 'auto-status'; el.textContent = '真上の写真がないときは、横から撮るだけで判定します。'; return; }
+  if (t.base == null) { el.className = 'auto-status'; el.textContent = 'キャップを測っています…'; return; }
+  if (!(t.base >= ColorJudge.TOP_MIN)) {
+    el.className = 'auto-status warn';
+    el.textContent = `緑の枠の中にキャップが見つかりません（グレーのかたまり 枠の ${Math.round(t.base * 100)}%）。キャップが付いた容器を、口が枠の真ん中に大きく写るように真上から撮り直してください。`;
+    return;
+  }
+  const sideCap = editing.p.color.areas.some(a => a.look === 'gray');
+  el.className = 'auto-status ' + (sideCap ? 'warn' : 'ok');
+  el.textContent = `キャップが見つかりました（グレーのかたまり 枠の ${Math.round(t.base * 100)}%）。横の判定が合格したあと、真上から撮って判定します。` +
+    (sideCap ? '横の「判定する場所」にも「グレーのキャップ」があります。真上で見るなら、横のその場所は削除してください（残すと、横と真上の両方で判定します）。' : '');
+}
+$('#btnEdTop').addEventListener('click', () => $('#edTopInput').click());
+$('#edTopInput').addEventListener('change', async () => {
+  const f = $('#edTopInput').files[0]; $('#edTopInput').value = '';
+  if (!f) return;
+  try {
+    const image = await fileToJpeg(f, 1280);
+    editing.p.top = { image, base: null }; editing.dirty = true;
+    renderTop();
+    editing.p.top.base = (await ColorJudge.measureTop(image)).base;
+    renderTop();
+  } catch (e) { showError(e.message); }
+});
+$('#btnEdTopDel').addEventListener('click', () => {
+  if (!confirm('真上の写真を外しますか？（真上からのキャップの判定をしなくなります）')) return;
+  delete editing.p.top; editing.dirty = true;
+  renderTop();
 });
 
 $('#btnSave').addEventListener('click', async () => {
@@ -964,6 +1104,7 @@ $('#btnSave').addEventListener('click', async () => {
   delete p.items; delete p.auto; // 20261028-4 までの「目視で確認する項目」「見本と見比べて判定」の設定は使わないので消す
   if (!p.name) { showError('製品名を入れてください。'); $('#edName').focus(); return; }
   if (!colorReady(p)) { showError('自動判定の設定（見本の写真・目印・判定する場所）を入れてください。'); renderEdit(); return; }
+  if (p.top && !topReady(p)) { showError('真上の写真でキャップが見つかりません。真上の写真を撮り直すか、「真上の写真を外す」を押してください。'); renderTop(); return; }
   if (data.products.some(x => x.id !== p.id && x.name === p.name)) { showError('同じ製品名がすでに登録されています。'); return; }
   p.updatedAt = new Date().toISOString();
   const i = data.products.findIndex(x => x.id === p.id);
