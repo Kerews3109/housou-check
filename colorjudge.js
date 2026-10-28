@@ -26,6 +26,17 @@ const ColorJudge = (() => {
   const SMOOTH_ON = 0.5;      // なめらかな点がこの割合以上あれば「あり」
   const SMOOTH_OFF = 0.45;    // この割合以下なら「なし」（間は判定できない）
   const SMOOTH_MIN = 0.5;     // 見本でなめらかな点がこれ未満の場所は、なめらかさの判定に使えない
+  // ※ なめらかさ（smooth）は 20261028-4 までの設定。今はグレーのキャップ（gray）を使う（古い設定のまま判定できるよう残す）
+
+  // グレーのキャップで見る場所（オーバーキャップ）：囲んだ広い範囲の中の、いちばん大きい「グレーのなめらかなかたまり」の大きさ。
+  //   大きさは目印の四角の大きさに対する倍率（撮る距離が変わっても同じ値になる）。
+  //   キャップがあると大きなグレーの面になり、無いとステンレスの映り込みや白い部品で、なめらかなグレーは細切れになる。
+  //   場所は目印から離れていて、撮る角度で位置が大きく変わるため、囲む範囲を広くとり、その中のどこにあってもよいことにする
+  //   実物の写真（2026-10-28、キャップあり 6 枚・なし 8 枚）：ありは目印の 0.66 倍以上、なしは 0.39 倍以下
+  const GRAY_ON = 0.55;       // 目印のこの倍以上の大きさのかたまりがあれば「あり」
+  const GRAY_OFF = 0.45;      // この倍以下なら「なし」（間は判定できない）
+  const GRAY_MIN = 0.6;       // 見本で、かたまりがこの倍未満の場所は使えない（見本でキャップが見つかっていない）
+  const GRAY_OUT_MAX = 0.7;   // 広く囲むので、写真の外にはみ出してもよい割合を大きめにする
   const AVOID_TOL = 30;       // 場所の色を決めるとき、目印の色合いからこの幅（度）の色は選ばない
   const FIT_VERSION = 3;      // 場所の四角の決め方の版（変えたら上げる。アプリは見本の編集を開いたときに測り直す）
   const FIT_MARGIN = 0.1;     // 場所の四角のまわりに、少なくとも目印の幅・高さのこの割合の余白をとる
@@ -175,6 +186,37 @@ const ColorJudge = (() => {
     }
     return { r: n / Math.max(1, t), out: 1 - t / r.area };
   }
+  // 四角の中で、グレーのなめらかな点（明るさの変わり方が小さく、色がうすく、暗すぎも明るすぎもしない）がつながった、いちばん大きいかたまりの点の数
+  function grayBlob(P, r) {
+    const { W } = P, x0 = Math.max(1, r.x0), x1 = Math.min(P.W - 1, r.x1), y0 = Math.max(1, r.y0), y1 = Math.min(P.H - 1, r.y1);
+    const ok = i => P.ss[i] < 0.15 && P.ll[i] > 0.25 && P.ll[i] < 0.8 &&
+      Math.abs(P.ll[i + 1] - P.ll[i - 1]) + Math.abs(P.ll[i + W] - P.ll[i - W]) < SMOOTH_GRAD;
+    const seen = new Uint8Array(P.W * P.H);
+    let best = 0, t = 0;
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
+      t++;
+      const i0 = y * W + x;
+      if (seen[i0] || !ok(i0)) continue;
+      const st = [i0]; seen[i0] = 1; let n = 0;
+      while (st.length) {
+        const k = st.pop(), kx = k % W, ky = (k / W) | 0; n++;
+        if (kx > x0 && !seen[k - 1] && ok(k - 1)) { seen[k - 1] = 1; st.push(k - 1); }
+        if (kx < x1 - 1 && !seen[k + 1] && ok(k + 1)) { seen[k + 1] = 1; st.push(k + 1); }
+        if (ky > y0 && !seen[k - W] && ok(k - W)) { seen[k - W] = 1; st.push(k - W); }
+        if (ky < y1 - 1 && !seen[k + W] && ok(k + W)) { seen[k + W] = 1; st.push(k + W); }
+      }
+      if (n > best) best = n;
+    }
+    return { n: best, out: 1 - t / r.area };
+  }
+  const anchorPx = (P, b) => Math.max(1, b.w * P.W * b.h * P.H);
+  /* グレーのキャップで見る場所を決める：見本の写真の四角（0〜1）の中の、いちばん大きいグレーのかたまりの大きさ（目印の何倍か）
+     戻り値：{ kind: 'gray', base }。四角は囲んだまま */
+  async function measureGray(src, box, anchor) {
+    const P = await prep(src);
+    return { kind: 'gray', base: grayBlob(P, pxBox(P, box)).n / anchorPx(P, anchor.box) };
+  }
+
   /* なめらかさで見る場所を決める：見本の写真の四角（0〜1）の中で、なめらかな点の割合
      戻り値：{ kind: 'smooth', base（見本でのなめらかさ 0〜1） }。四角は囲んだまま（小さくしない） */
   async function measureSmooth(src, box) {
@@ -220,6 +262,14 @@ const ColorJudge = (() => {
     const res = cfg.areas.map(a => {
       // 見本で目印に対してどこにあったかを、撮影写真の目印に当てはめる
       const box = { x: A.x + (a.x - an.x) / an.w * A.w, y: A.y + (a.y - an.y) / an.h * A.h, w: a.w / an.w * A.w, h: a.h / an.h * A.h };
+      if (a.color.kind === 'gray') {
+        const base = a.color.base, on = GRAY_ON, off = GRAY_OFF;
+        if (base < GRAY_MIN) return { verdict: 'unsure', why: 'nobase', ratio: null, base, on, off, box, kind: 'gray' };
+        const m = grayBlob(P, pxBox(P, box)), r = m.n / anchorPx(P, A);
+        if (m.out > GRAY_OUT_MAX) return { verdict: 'unsure', why: 'out', ratio: r, base, on, off, box, kind: 'gray' };
+        const verdict = r >= on ? 'pass' : r <= off ? 'fail' : 'unsure';
+        return { verdict, why: verdict === 'pass' ? 'ok' : verdict === 'fail' ? 'missing' : 'mid', ratio: r, base, on, off, box, kind: 'gray' };
+      }
       if (a.color.kind === 'smooth') {
         const base = a.color.base, on = SMOOTH_ON, off = SMOOTH_OFF;
         if (base < SMOOTH_MIN) return { verdict: 'unsure', why: 'nobase', ratio: null, base, on, off, box, kind: 'smooth' };
@@ -241,5 +291,5 @@ const ColorJudge = (() => {
     return { verdict, why: verdict, anchorBox: A, areas: res };
   }
 
-  return { pickAnchor, measureArea, measureSmooth, SMOOTH_ON, SMOOTH_OFF, SMOOTH_MIN, judge, hueDist, FIT_VERSION, ON, OFF, MIN_BASE, AVOID_TOL };
+  return { pickAnchor, measureArea, measureSmooth, measureGray, GRAY_ON, GRAY_OFF, GRAY_MIN, SMOOTH_ON, SMOOTH_OFF, SMOOTH_MIN, judge, hueDist, FIT_VERSION, ON, OFF, MIN_BASE, AVOID_TOL };
 })();

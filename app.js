@@ -125,33 +125,20 @@ function centerCrop(w, h, ar) {
 }
 async function imageAr(src) { const im = await loadImage(src); return im.naturalWidth / im.naturalHeight; }
 
-/* 自動判定の設定
-   p.auto = { areas: [{ x, y, w, h（0〜1）, name }], ng: [ラベルなしの写真], ok: [追加のラベルありの写真] }
-   ※ 20261026-2 までは四角が 1 つだけ（p.auto.area）。読むときは areasOf で両方に対応する */
-const areasOf = p => (p && p.auto && (p.auto.areas || (p.auto.area ? [p.auto.area] : []))) || [];
-const autoReady = p => !!(p && p.image && areasOf(p).length && p.auto.ng && p.auto.ng.length);
-const okSamples = p => [p.image].concat(p.auto.ok || []);
 const areaName = (a, i) => `${'①②③④⑤⑥⑦⑧⑨⑩'[i] || i + 1}${a.name ? a.name : ''}`;
-/* 色で判定の設定（colorjudge.js）
-   p.color = { anchor: { h, s, v, box, ar, fill, inner }（目印）, areas: [{ x, y, w, h（0〜1）, name, color: { h, s, v, base } }] }
-   色で判定の設定がそろっていれば、見本と見比べる自動判定より優先して使う */
+/* 自動判定の設定（colorjudge.js）
+   p.color = { anchor: { h, s, v, box, ar, fill, inner }（目印）, areas: [{ x, y, w, h（0〜1）, name, look, color }] }
+   look：場所で見るもの（なし＝色、'gray'＝グレーのキャップ。'smooth'＝なめらかさ は 20261028-4 までの設定）
+   ※ 20261028-5 で「見本と見比べて判定」（judge.js・p.auto）と「目視で確認する項目」（p.items）をやめた（前の版のデータに残っていても使わない） */
 const colorReady = p => !!(p && p.image && p.color && p.color.anchor && p.color.areas && p.color.areas.length && p.color.areas.every(a => a.color));
-const methodOf = p => colorReady(p) ? 'color' : autoReady(p) ? 'compare' : null;
-const judgeAreas = p => methodOf(p) === 'color' ? p.color.areas : areasOf(p);
-const MAX_AREA = 0.12; // ラベルの場所の四角が写真のこれ以上を占めたら「大きすぎる」と知らせる
+const methodOf = p => colorReady(p) ? 'color' : null;
 
-// 写真の上に番号の印とラベルの場所の四角を描く（x, y は写真に対する 0〜1）。states は場所ごとの 'pass' / 'fail' / 'unsure'
-// anchor：色で判定の目印の四角（あれば）。cls：四角の見た目（'area' 見本と見比べる場所 / 'carea' 色で判定する場所）
-function drawMarks(el, items, answers, areas, states, anchor, cls = 'area') {
+// 写真の上に、目印の枠と判定する場所の四角を描く（x, y は写真に対する 0〜1）。states は場所ごとの 'pass' / 'fail' / 'unsure'
+function drawMarks(el, areas, states, anchor) {
   const pos = b => `left:${b.x * 100}%;top:${b.y * 100}%;width:${b.w * 100}%;height:${b.h * 100}%`;
-  const boxes = (anchor ? `<span class="anchor" style="${pos(anchor)}"><em>目印</em></span>` : '') + (areas || []).map((a, i) => {
+  el.innerHTML = (anchor ? `<span class="anchor" style="${pos(anchor)}"><em>目印</em></span>` : '') + (areas || []).map((a, i) => {
     const st = states && states[i] ? ' ' + states[i] : '';
-    return `<span class="area ${cls}${st}" style="${pos(a)}"><em>${i + 1}</em></span>`;
-  }).join('');
-  el.innerHTML = boxes + items.map((it, i) => {
-    if (it.x == null) return '';
-    const st = answers ? (answers[i] === true ? ' ok' : answers[i] === false ? ' ng' : '') : '';
-    return `<span class="mark${st}" style="left:${it.x * 100}%;top:${it.y * 100}%">${i + 1}</span>`;
+    return `<span class="area carea${st}" style="${pos(a)}"><em>${i + 1}</em></span>`;
   }).join('');
 }
 
@@ -159,8 +146,7 @@ function drawMarks(el, items, answers, areas, states, anchor, cls = 'area') {
 function productButton(p, attrs) {
   const img = p.image ? `<img src="${p.image}" alt="">` : '<span class="noimg">写真なし</span>';
   const m = methodOf(p);
-  const how = [m === 'color' ? '色で判定' : m === 'compare' ? '自動判定' : '', p.items.length ? `目視 ${p.items.length} 項目` : '',
-    count && count.productId === p.id && attrs.startsWith('data-id') ? `合格 ${count.pass} 個` : ''].filter(Boolean).join('・');
+  const how = [m ? '自動判定' : '自動判定の設定なし', count && count.productId === p.id && attrs.startsWith('data-id') ? `合格 ${passCount()} 個` : ''].filter(Boolean).join('・');
   return `<button class="product" ${attrs}>${img}<span class="p-text"><b>${esc(p.name)}</b>` +
     `<small>${esc(p.code || '')}${p.code ? '　' : ''}${how}</small></span><span class="chev">›</span></button>`;
 }
@@ -374,7 +360,6 @@ function renderQr() {
   $('#ghost').hidden = wait || !p.image;
   $('#ghostCtl').hidden = wait || !p.image || !checking.live;
   $('#btnShutter').hidden = wait || !checking.live;
-  $('#btnNoPhoto').hidden = wait;
   $('#btnPhoto').textContent = wait ? 'QR を撮影' : 'カメラで撮影';
   $('#btnPick').querySelector('b').textContent = wait ? '保存した写真から QR を読む' : '保存した写真で判定する';
   if (use) $('#shootHint').textContent = stop ? '' : wait
@@ -392,7 +377,7 @@ $('#btnQrManual').addEventListener('click', () => {
 
 /* ---------- ② 撮影 ---------- */
 // test：見本の編集の「判定を試す」から来たとき（保存前の見本で判定する）
-const checking = { product: null, shot: null, aligned: false, answers: [], test: false, ar: 0.75, auto: null, token: 0 };
+const checking = { product: null, shot: null, aligned: false, test: false, ar: 0.75, auto: null, token: 0 };
 let stream = null;
 
 async function startShoot() {
@@ -407,7 +392,7 @@ async function startShoot() {
   $('#ghostImg').src = p.image || '';
   $('#ghost').hidden = !p.image;
   $('#ghostCtl').hidden = !p.image;
-  drawMarks($('#ghostMarks'), p.items, null, judgeAreas(p), null, methodOf(p) === 'color' ? p.color.anchor.box : null, methodOf(p) === 'color' ? 'carea' : 'area');
+  drawMarks($('#ghostMarks'), methodOf(p) ? p.color.areas : [], null, methodOf(p) ? p.color.anchor.box : null);
   applyOpacity();
 
   rollDay();
@@ -510,7 +495,7 @@ async function autoTick() {
     const p = checking.product, c = frameCanvas(v, 1280);
     const r = await ColorJudge.judge(c, p.color);
     if (!auto.timer) return; // 判定している間に画面が変わった
-    drawMarks($('#liveMarks'), [], null, r.anchorBox ? r.areas.map(a => a.box) : [], r.areas.map(a => a.verdict), r.anchorBox || null, 'carea');
+    drawMarks($('#liveMarks'), r.anchorBox ? r.areas.map(a => a.box) : [], r.areas.map(a => a.verdict), r.anchorBox || null);
     const sig = r.verdict === 'unsure' ? '' : r.verdict + ':' + r.areas.map(a => a.verdict).join(',');
     auto.hist.push(sig);
     if (auto.hist.length > AUTO_FAIL) auto.hist.shift();
@@ -589,43 +574,37 @@ async function usePhotoFile(f) {
     return;
   }
   stopCamera();
-  // 見本と見比べる自動判定のときは、見本と同じ縦横比に中央を切り出して比べる（色で判定は目印を探すので切り出さない）
-  const m = methodOf(checking.product), crop = m === 'compare';
-  try { checking.shot = await fileToJpeg(f, 1280, crop ? checking.ar : null); checking.aligned = crop || m === 'color'; openCheck(); }
+  try { checking.shot = await fileToJpeg(f, 1280); checking.aligned = true; openCheck(); } // 目印を探すので切り出さない
   catch (e) { showError(e.message); }
 }
-$('#btnNoPhoto').addEventListener('click', () => { checking.shot = null; openCheck(); });
 
-/* ---------- ③ 見比べてチェック ---------- */
+/* ---------- ③ 結果 ---------- */
 // pre：自動判定で決めたときの判定結果（その映像で判定し直さない）
 function openCheck(pre) {
   const p = checking.product;
-  checking.answers = p.items.map(() => null);
   checking.auto = null;
   checking.countState = null; checking.noCount = false;
-  // 撮影 → チェックは「戻る」で撮影へ戻れるよう、履歴を置き換える
+  // 撮影 → 結果は「戻る」で撮影へ戻れるよう、履歴を置き換える
   history.replaceState({ v: 'check' }, '');
   showView('check');
   if (checking.test) $('#title').textContent = '判定を試す';
-  const m = methodOf(p);
   if (pre) {
     checking.auto = pre;
     notify(pre.verdict);
-  } else if (m && checking.shot) {
+  } else if (methodOf(p) && checking.shot) {
     checking.auto = 'pending';
     const token = ++checking.token;
-    (m === 'color' ? ColorJudge.judge(checking.shot, p.color) : Judge.judge(checking.shot, checking.ar, okSamples(p), p.auto.ng, areasOf(p)))
+    ColorJudge.judge(checking.shot, p.color)
       .catch(e => ({ verdict: 'unsure', why: 'error', message: e.message, areas: [] }))
       .then(r => { if (token === checking.token) { checking.auto = r; renderCheck(); notify(r.verdict); } });
   }
   renderCheck();
 }
 function renderCheck() {
-  const p = checking.product, a = checking.answers;
-  const method = methodOf(p), isColor = method === 'color';
+  const p = checking.product, method = methodOf(p);
   const useAuto = !!method && !!checking.shot;
   const auto = useAuto && checking.auto && checking.auto !== 'pending' ? checking.auto : null;
-  const areas = judgeAreas(p), cls = isColor ? 'carea' : 'area';
+  const areas = method ? p.color.areas : [];
   const states = auto ? areas.map((_, i) => auto.areas[i] ? auto.areas[i].verdict : 'unsure') : null;
   $('#cmpSample').src = p.image || '';
   $('#cmpSample').closest('figure').hidden = !p.image;
@@ -633,31 +612,27 @@ function renderCheck() {
   if (checking.shot) $('#cmpShot').src = checking.shot;
   $('#compare').classList.toggle('single', !p.image || !checking.shot);
   $('#compare').hidden = !p.image && !checking.shot;
-  drawMarks($('#cmpSampleMarks'), p.items, a, areas, null, isColor ? p.color.anchor.box : null, cls);
-  // 撮影写真の四角は、機械が見つけた場所に描く（色で判定：目印から求めた場所、見本と見比べる：場所ごとの位置合わせの結果）
-  let shotAreas = useAuto ? areas : null;
-  if (isColor) shotAreas = auto && auto.anchorBox ? auto.areas.map(r => r.box) : null;
-  else if (shotAreas && auto && auto.align) {
-    const { dx, dy, s } = auto.align;
-    shotAreas = shotAreas.map((b, i) => (auto.areas[i] && auto.areas[i].box) ||
-      { x: 0.5 + dx + (b.x - 0.5) * s, y: 0.5 + dy + (b.y - 0.5) * s, w: b.w * s, h: b.h * s });
-  }
-  if (checking.aligned) drawMarks($('#cmpShotMarks'), isColor ? [] : p.items, a, shotAreas, states, isColor && auto ? auto.anchorBox : null, cls);
+  drawMarks($('#cmpSampleMarks'), areas, null, method ? p.color.anchor.box : null);
+  // 撮影写真の四角は、目印から求めた場所に描く
+  if (checking.aligned && auto && auto.anchorBox) drawMarks($('#cmpShotMarks'), auto.areas.map(r => r.box), states, auto.anchorBox);
   else $('#cmpShotMarks').innerHTML = '';
-  $('#checklistTitle').hidden = !(method && p.items.length);
 
   // 試しの判定では、場所ごとの判定の数字も見せる
   const sc = $('#score');
   sc.hidden = !(checking.test && auto && auto.areas.length);
-  if (!sc.hidden && isColor) {
-    sc.innerHTML = `色の量（見本での量の ${Math.round(ColorJudge.ON * 100)}%以上で「あり」、${Math.round(ColorJudge.OFF * 100)}%以下で「なし」。なめらかさで見る場所は、その行に書いた割合）` +
+  if (!sc.hidden) {
+    sc.innerHTML = `色の量（見本での量の ${Math.round(ColorJudge.ON * 100)}%以上で「あり」、${Math.round(ColorJudge.OFF * 100)}%以下で「なし」。グレーのキャップは、その行に書いた大きさ）` +
       auto.areas.map((ar, i) => {
         const name = esc(areaName(areas[i], i)), base = ar.base * 100;
+        if (ar.kind === 'gray') {
+          if (ar.ratio == null) return `<div class="score-row"><b>${name}</b>：見本で、囲んだ範囲にキャップが見つからないため、判定できません</div>`;
+          return `<div class="score-row"><b>${name}</b>　グレーのかたまり 目印の ${ar.ratio.toFixed(2)} 倍（見本 ${ar.base.toFixed(2)} 倍。${ColorJudge.GRAY_ON} 倍以上で「あり」、${ColorJudge.GRAY_OFF} 倍以下で「なし」）${ar.why === 'out' ? '（写真の外にはみ出し）' : ''}
+            <div class="bar gray-bar"><i style="left:${Math.min(100, ar.ratio * 100)}%"></i></div></div>`;
+        }
         if (ar.kind === 'smooth') {
           if (ar.ratio == null) return `<div class="score-row"><b>${name}</b>：見本でこの場所がなめらかではないため、判定できません</div>`;
-          const sp = Math.min(100, ar.ratio * 100);
           return `<div class="score-row"><b>${name}</b>　なめらか ${Math.round(ar.ratio * 100)}%（見本 ${Math.round(ar.base * 100)}%。${Math.round(ColorJudge.SMOOTH_ON * 100)}%以上で「あり」、${Math.round(ColorJudge.SMOOTH_OFF * 100)}%以下で「なし」）${ar.why === 'out' ? '（写真の外にはみ出し）' : ''}
-            <div class="bar smooth-bar"><i style="left:${sp}%"></i></div></div>`;
+            <div class="bar smooth-bar"><i style="left:${Math.min(100, ar.ratio * 100)}%"></i></div></div>`;
         }
         if (ar.ratio == null) return `<div class="score-row"><b>${name}</b>：見本でこの色がほとんど無いため、判定できません</div>`;
         const pct = Math.min(100, ar.ratio / Math.max(ar.base, 1e-6) * 100); // 見本での量を 100 としたときの量
@@ -665,62 +640,27 @@ function renderCheck() {
           <div class="bar color-bar"><i style="left:${pct}%"></i></div></div>`;
       }).join('') +
       '<div class="scale color-scale"><span>なし</span><span>判定できない</span><span>あり（見本の量）</span></div>';
-  } else if (!sc.hidden) {
-    sc.innerHTML = `ラベルありらしさ（${Math.round(Judge.PASS * 100)}%以上で合格、${Math.round(Judge.FAIL * 100)}%以下で不合格）` +
-      auto.areas.map((ar, i) => {
-        const name = esc(areaName(areas[i], i));
-        if (ar.score == null) return `<div class="score-row"><b>${name}</b>：ラベルあり・なしの見本に違いがないため、判定できません</div>`;
-        const pct = Math.round(ar.score * 100);
-        return `<div class="score-row"><b>${name}</b>　<b>${pct}%</b>${ar.why === 'far' ? '（見本と違いすぎ）' : ''}
-          <div class="bar"><i style="left:${pct}%"></i></div>
-          <small>見本との違い：ラベルあり ${ar.dOk.toFixed(1)} ／ ラベルなし ${ar.dNg.toFixed(1)}（見本どうしの違い ${ar.dRef.toFixed(1)}）</small></div>`;
-      }).join('') +
-      '<div class="scale"><span>不合格</span><span>判定できない</span><span>合格</span></div>';
   }
   $('#btnNext').textContent = checking.test ? 'もう一度試す' : '次の容器へ';
   $('#btnRetake').hidden = checking.test;
   $('#btnEndTry').hidden = !checking.test;
 
-  $('#checklist').innerHTML = p.items.map((it, i) => {
-    const st = a[i] === true ? ' ok' : a[i] === false ? ' ng' : '';
-    return `<li class="check-item${st}" data-i="${i}">
-      <div class="ci-text"><span class="ci-no${it.x == null ? ' plain' : ''}">${i + 1}</span>${esc(it.text)}</div>
-      <div class="ci-btns"><button class="b-ok${a[i] === true ? ' on' : ''}" data-v="1">OK</button><button class="b-ng${a[i] === false ? ' on' : ''}" data-v="0">NG</button></div>
-    </li>`;
-  }).join('');
-
   const r = $('#result');
   r.hidden = false;
-  const left = a.filter(x => x === null).length;
-  const ng = p.items.filter((_, i) => a[i] === false);
-  const ngText = ng.length ? `NG：${ng.map(it => esc(it.text)).join('、')}` : '';
-  if (useAuto) {
-    // 自動判定あり：機械の判定が主。目視の項目で NG があれば不合格（未チェックでも止めない）
-    const subs = [];
-    if (!auto) {
-      r.className = 'result wait'; r.innerHTML = '<div class="r-big">判定中…</div>';
-    } else if (auto.verdict === 'fail' || ng.length) {
-      if (auto.verdict === 'fail') subs.push(areas.length > 1 ? 'ない場所：' + namesWith(areas, auto, 'fail') : 'ラベルが貼られていません。');
-      if (ngText) subs.push(ngText);
-      r.className = 'result fail'; r.innerHTML = `<div class="r-big">不合格</div><div class="r-sub">${subs.join('<br>')}</div>`;
-    } else if (auto.verdict === 'unsure') {
-      r.className = 'result unsure'; r.innerHTML = `<div class="r-big">判定できません</div><div class="r-sub">${unsureText(areas, auto)}</div>`;
-    } else {
-      subs.push(areas.length > 1 ? `すべての場所（${areas.length} か所）が OK です。` : 'ラベルがあります。');
-      if (p.items.length && left) subs.push(`目視の項目もあれば確認してください（未チェック ${left} 件）`);
-      r.className = 'result pass'; r.innerHTML = `<div class="r-big">合格</div><div class="r-sub">${subs.join('<br>')}</div>`;
-    }
-  } else if (method && !p.items.length) {
-    r.className = 'result wait'; r.innerHTML = '<div class="r-big">自動判定には撮影が必要です。「撮り直す」から撮影してください</div>';
-  } else if (!p.items.length) {
-    r.className = 'result wait'; r.innerHTML = '<div class="r-big">チェック項目が登録されていません</div>';
-  } else if (ng.length) {
+  if (!method) {
+    r.className = 'result wait'; r.innerHTML = '<div class="r-big">自動判定の設定がありません</div><div class="r-sub">「見本の登録」で、この製品の自動判定を設定してください。</div>';
+  } else if (!checking.shot) {
+    r.className = 'result wait'; r.innerHTML = '<div class="r-big">撮影してください</div><div class="r-sub">「撮り直す」から撮影してください。</div>';
+  } else if (!auto) {
+    r.className = 'result wait'; r.innerHTML = '<div class="r-big">判定中…</div>';
+  } else if (auto.verdict === 'fail') {
     r.className = 'result fail';
-    r.innerHTML = `<div class="r-big">不合格</div><div class="r-sub">${ngText}</div>`;
-  } else if (left) {
-    r.className = 'result wait'; r.innerHTML = `<div class="r-big">あと ${left} 項目をチェックしてください</div>`;
+    r.innerHTML = `<div class="r-big">不合格</div><div class="r-sub">${areas.length > 1 ? 'ない場所：' + namesWith(areas, auto, 'fail') : 'ラベルが貼られていません。'}</div>`;
+  } else if (auto.verdict === 'unsure') {
+    r.className = 'result unsure'; r.innerHTML = `<div class="r-big">判定できません</div><div class="r-sub">${unsureText(areas, auto)}</div>`;
   } else {
-    r.className = 'result pass'; r.innerHTML = '<div class="r-big">合格</div><div class="r-sub">すべての項目が OK です</div>';
+    r.className = 'result pass';
+    r.innerHTML = `<div class="r-big">合格</div><div class="r-sub">${areas.length > 1 ? `すべての場所（${areas.length} か所）が OK です。` : 'ラベルがあります。'}</div>`;
   }
   if (checking.container) r.insertAdjacentHTML('afterbegin', `<div class="r-no">容器No. ${fmtNo(checking.container)}</div>`);
   syncCount(r.classList.contains('pass') ? 'pass' : r.classList.contains('fail') ? 'fail' : null);
@@ -729,22 +669,12 @@ function renderCheck() {
 const namesWith = (areas, auto, verdict) => esc(areas.map((a, i) => auto.areas[i] && auto.areas[i].verdict === verdict ? areaName(a, i) : '').filter(Boolean).join('、'));
 function unsureText(areas, auto) {
   if (auto.why === 'error') return esc(`判定できませんでした（${auto.message}）。撮り直してください。`);
-  if (auto.why === 'shift') return '容器の位置が見本と大きくずれています。見本に重なるように撮り直してください。';
   if (auto.why === 'noanchor') return '目印が見つかりません。目印（例：黄色い楕円）全体がはっきり写るように撮り直してください。';
-  const WHY = { far: '見本と違いすぎます（製品・向き・距離・明るさを確かめてください）', mid: 'はっきりしません', shift: '場所が見つかりません（容器が大きくずれています）', noref: 'ラベルあり・なしの見本に違いがありません（見本の登録を見直してください）',
-    out: '写真の外にはみ出しています（容器全体が写るように）', nobase: '見本でこの色がほとんどありません（見本の登録を見直してください）',
+  const WHY = { mid: 'はっきりしません', out: '写真の外にはみ出しています（容器全体が写るように）', nobase: '見本でこの場所の色・キャップが見つかっていません（見本の登録を見直してください）',
     same: '目印と同じ色を測る設定になっています（見本の登録で「囲み直す」をしてください）' };
   const lines = auto.areas.map((r, i) => r.verdict === 'unsure' ? `${areas.length > 1 ? areaName(areas[i], i) + '：' : ''}${WHY[r.why] || ''}` : '').filter(Boolean);
-  return esc(lines.join(' ／ ')) + (methodOf(checking.product) === 'color' ? '<br>目印と判定する場所がはっきり写るように撮り直してください。' : '<br>見本に重なるように撮り直してください。');
+  return esc(lines.join(' ／ ')) + '<br>目印と判定する場所がはっきり写るように撮り直してください。';
 }
-$('#checklist').addEventListener('click', e => {
-  const b = e.target.closest('.ci-btns button'); if (!b) return;
-  const i = +b.closest('.check-item').dataset.i, v = b.dataset.v === '1';
-  checking.answers[i] = checking.answers[i] === v ? null : v; // もう一度押すと取り消し
-  const wasDone = !checking.answers.includes(null);
-  renderCheck();
-  if (!checking.answers.includes(null) && wasDone) $('#result').scrollIntoView({ behavior: 'smooth', block: 'center' });
-});
 // next：次の容器へ（容器の QR から読み直す）。撮り直すは同じ容器のまま
 function retake(next) {
   if (next === true) { checking.container = null; checking.qrStop = null; }
@@ -809,23 +739,17 @@ AppKit.fileDrop({
 });
 
 /* ---------- ⑤ 見本の編集 ---------- */
-// marking：印を付けている項目の番号、areaIdx：囲んでいる途中の場所の番号（新しく足すときは場所の数と同じ）、addKind：追加する写真（'ng' / 'ok'）
-// areaKind：囲んでいる場所の種類（'auto' 見本と見比べる / 'color' 色で判定）、pickAnchor：色で判定の目印をタップで選んでいる途中
-const editing = { p: null, isNew: false, marking: null, areaIdx: null, areaKind: 'auto', pickAnchor: false, drawStart: null, addKind: null, dirty: false };
-const editAreas = () => editing.areaKind === 'color' ? editing.p.color.areas : editing.p.auto.areas;
+// areaIdx：囲んでいる途中の場所の番号（新しく足すときは場所の数と同じ）、pickAnchor：目印をタップで選んでいる途中
+const editing = { p: null, isNew: false, areaIdx: null, pickAnchor: false, drawStart: null, dirty: false };
 const newId = () => 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
 function openEdit(p) {
   editing.isNew = !p;
-  editing.p = p ? JSON.parse(JSON.stringify(p))
-    : { id: newId(), name: '', code: '', image: '', items: [] };
-  // 前の版の四角 1 つ（auto.area）は、場所の並び（auto.areas）に移す
-  const au = Object.assign({ ng: [], ok: [] }, editing.p.auto);
-  au.areas = areasOf(editing.p).map(a => Object.assign({ name: '' }, a));
-  delete au.area;
-  editing.p.auto = au;
+  editing.p = p ? JSON.parse(JSON.stringify(p)) : { id: newId(), name: '', code: '', image: '' };
   editing.p.color = Object.assign({ anchor: null, areas: [] }, editing.p.color);
-  editing.marking = null; editing.areaIdx = null; editing.areaKind = 'auto'; editing.pickAnchor = false; editing.drawStart = null; editing.dirty = false;
+  // 20261028-4 までの「なめらかさ」の場所は、グレーのキャップに変えて測り直す
+  editing.p.color.areas.forEach(a => { if (a.look === 'smooth') { a.look = 'gray'; delete a.fitv; } });
+  editing.areaIdx = null; editing.pickAnchor = false; editing.drawStart = null; editing.dirty = false;
   $('#edName').value = editing.p.name;
   $('#edCode').value = editing.p.code || '';
   $('#edKind').innerHTML = '<option value="">使わない（容器の QR を読まない）</option>' +
@@ -840,7 +764,7 @@ function openEdit(p) {
   if (old.length) {
     Promise.all(old.map(a => measureColorArea(a))).then(() => {
       editing.dirty = true;
-      showInfo('色で判定の場所を、新しい測り方で測り直しました。「判定を試す」で確かめてから保存してください。');
+      showInfo('自動判定の場所を、新しい測り方で測り直しました。「判定を試す」で確かめてから保存してください。');
     });
   }
 }
@@ -849,126 +773,23 @@ function renderEdit() {
   $('#edPic').hidden = !p.image;
   $('#edPicEmpty').hidden = !!p.image;
   if (p.image) $('#edPic').src = p.image;
-  drawMarks($('#edMarks'), p.items, null, p.auto.areas);
   drawColorMarks();
-  $('#edPicWrap').classList.toggle('marking', editing.marking != null || editing.pickAnchor);
+  $('#edPicWrap').classList.toggle('marking', editing.pickAnchor);
   $('#edPicWrap').classList.toggle('drawing', editing.areaIdx != null);
   const hint = $('#edMarkHint');
-  hint.hidden = editing.marking == null && editing.areaIdx == null && !editing.pickAnchor;
-  if (editing.marking != null) hint.textContent = `見本写真の、項目 ${editing.marking + 1} の場所をタップしてください。`;
+  hint.hidden = editing.areaIdx == null && !editing.pickAnchor;
   if (editing.pickAnchor) hint.textContent = '見本写真の、いつも貼ってある鮮やかな色の部分（例：黄色い楕円のふち）をタップしてください。';
-  if (editing.areaIdx != null) hint.textContent = editing.areaKind === 'color'
-    ? `見本写真の上を指でなぞって、色で判定する場所 ${editing.areaIdx + 1} を囲んでください（例：赤い充シール、白い Lot 枠）。囲んだあと、色のある部分に合わせて四角が小さくなります。`
-    : `見本写真の上を指でなぞって、場所 ${editing.areaIdx + 1} の四角を囲んでください（あり・なしで色が変わる部分だけ）。`;
+  if (editing.areaIdx != null) hint.textContent = `見本写真の上を指でなぞって、判定する場所 ${editing.areaIdx + 1} を囲んでください（例：赤い充シール、白い Lot 枠、キャップが写る口の上の広い範囲）。`;
   renderColor();
-  renderAuto();
-  $('#edItems').innerHTML = p.items.map((it, i) => `<li class="edit-item" data-i="${i}">
-      <span class="ci-no${it.x == null ? ' plain' : ''}">${i + 1}</span>
-      <input type="text" value="${esc(it.text)}" placeholder="例：正面にラベルが貼ってある">
-      <button class="pos${editing.marking === i ? ' on' : ''}" ${p.image ? '' : 'disabled'}>${it.x == null ? '位置' : '位置✓'}</button>
-      <button class="del" aria-label="削除">削除</button>
-    </li>`).join('');
 }
 $('#edName').addEventListener('input', () => { editing.dirty = true; });
 $('#edCode').addEventListener('input', () => { editing.dirty = true; });
 $('#edKind').addEventListener('change', () => { editing.dirty = true; });
-$('#edItems').addEventListener('input', e => {
-  const li = e.target.closest('.edit-item'); if (!li) return;
-  editing.p.items[+li.dataset.i].text = e.target.value; editing.dirty = true;
-});
-$('#edItems').addEventListener('click', e => {
-  const b = e.target.closest('button'); if (!b) return;
-  const i = +b.closest('.edit-item').dataset.i, it = editing.p.items[i];
-  if (b.classList.contains('del')) {
-    editing.p.items.splice(i, 1); editing.marking = null;
-  } else if (b.classList.contains('pos')) {
-    if (editing.marking === i) { it.x = it.y = null; editing.marking = null; } // 印を付けている途中にもう一度押すと印を消す
-    else { editing.marking = i; editing.areaIdx = null; $('#edPicWrap').scrollIntoView({ behavior: 'smooth', block: 'center' }); }
-  }
-  editing.dirty = true;
-  renderEdit();
-});
-$('#btnAddItem').addEventListener('click', () => {
-  editing.p.items.push({ text: '', x: null, y: null }); editing.dirty = true;
-  renderEdit();
-  const inputs = $('#edItems').querySelectorAll('input'); inputs[inputs.length - 1].focus();
-});
-// 自動判定の設定の表示
-let autoStatusToken = 0;
-function renderAuto() {
-  const p = editing.p, A = p.auto;
-  const thumbs = kind => A[kind].map((src, i) => `<div class="thumb"><img src="${src}" alt=""><button data-del="${kind}" data-i="${i}" aria-label="削除">×</button></div>`).join('');
-  $('#edNgList').innerHTML = thumbs('ng');
-  $('#edOkList').innerHTML = thumbs('ok');
-  const areas = A.areas;
-  $('#edAreaList').innerHTML = areas.map((a, i) => `<li class="area-row${editing.areaIdx === i ? ' on' : ''}" data-i="${i}">
-      <span class="area-no">${i + 1}</span>
-      <input type="text" value="${esc(a.name || '')}" placeholder="名前（任意）例：充シール">
-      <button data-redo="${i}">${editing.areaIdx === i ? 'やめる' : '囲み直す'}</button>
-      <button class="del" data-adel="${i}">削除</button>
-    </li>`).join('');
-  const ba = $('#btnArea');
-  const adding = editing.areaIdx === areas.length;
-  ba.disabled = !p.image;
-  ba.classList.toggle('on', adding);
-  ba.textContent = adding ? '囲むのをやめる' : (areas.length ? '＋ 場所を追加して囲む' : 'ラベルの場所を囲む');
-  $('#autoCard').querySelectorAll('[data-add]').forEach(b => { b.disabled = !p.image; });
-  $('#btnTry').disabled = !autoReady(p);
-
-  const st = $('#autoStatus');
-  const lack = [!p.image && '見本の写真（ラベルあり）', !A.ng.length && 'ラベルなしの写真', !areas.length && 'ラベルの場所'].filter(Boolean);
-  const token = ++autoStatusToken;
-  if (!A.ng.length && !areas.length) { st.className = 'auto-status'; st.textContent = '自動判定は使っていません。'; return; }
-  if (lack.length) { st.className = 'auto-status warn'; st.textContent = `自動判定には、あと「${lack.join('」「')}」が必要です。`; return; }
-  st.className = 'auto-status'; st.textContent = '見本を確かめています…';
-  const big = areas.map((a, i) => a.w * a.h > MAX_AREA ? `${areaName(a, i)}（写真の ${Math.round(a.w * a.h * 100)}%）` : '').filter(Boolean);
-  Judge.checkSetup(okSamples(p), A.ng, areas).then(rs => {
-    if (token !== autoStatusToken) return;
-    const unclear = rs.map((r, i) => r.clear ? '' : areaName(areas[i], i)).filter(Boolean);
-    const msgs = [];
-    if (big.length) msgs.push(`四角が大きすぎます：${big.join('、')}。ラベルのうち、あり・なしで色が変わる部分だけをぴったり囲んでください。周りの金属の映り込みや別のラベルが入ると、誤って合格になる原因になります。`);
-    if (unclear.length) msgs.push(`ラベルあり・なしの写真で違いがない場所があります：${unclear.join('、')}。この場所のラベルがない「ラベルなしの写真」を足すか、四角をラベルにぴったり合わせてください（このままでは、この場所は「判定できません」になります）。`);
-    if (msgs.length) { st.className = 'auto-status warn'; st.textContent = msgs.join('\n'); }
-    else { st.className = 'auto-status ok'; st.textContent = `自動判定の準備ができました（${areas.length} か所）。ラベルあり・なしの違いがはっきりしています。「判定を試す」で確かめてください。`; }
-  }).catch(e => { if (token === autoStatusToken) { st.className = 'auto-status warn'; st.textContent = '見本を確かめられませんでした：' + e.message; } });
-}
-$('#autoCard').addEventListener('click', e => {
-  const add = e.target.closest('[data-add]'), del = e.target.closest('[data-del]');
-  if (add) { editing.addKind = add.dataset.add; $('#edAutoInput').click(); }
-  if (del) { editing.p.auto[del.dataset.del].splice(+del.dataset.i, 1); editing.dirty = true; renderEdit(); }
-});
-$('#edAutoInput').addEventListener('change', async () => {
-  const f = $('#edAutoInput').files[0]; $('#edAutoInput').value = '';
-  if (!f || !editing.addKind) return;
-  try {
-    // 見本写真と同じ縦横比にそろえる（四角の位置が同じ場所を指すように）
-    const src = await fileToJpeg(f, 1280, await imageAr(editing.p.image));
-    editing.p.auto[editing.addKind].push(src);
-    editing.dirty = true;
-    renderEdit();
-  } catch (e) { showError(e.message); }
-});
-function startArea(i, kind = 'auto') {
-  const same = editing.areaIdx === i && editing.areaKind === kind;
-  editing.areaIdx = same ? null : i; editing.areaKind = kind; editing.marking = null; editing.pickAnchor = false; // 囲んでいる途中にもう一度押すとやめる
+function startArea(i) {
+  editing.areaIdx = editing.areaIdx === i ? null : i; editing.pickAnchor = false; // 囲んでいる途中にもう一度押すとやめる
   renderEdit();
   if (editing.areaIdx != null) $('#edPicWrap').scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
-$('#btnArea').addEventListener('click', () => startArea(editing.p.auto.areas.length));
-$('#edAreaList').addEventListener('click', e => {
-  const redo = e.target.closest('[data-redo]'), del = e.target.closest('[data-adel]');
-  if (redo) startArea(+redo.dataset.redo);
-  if (del) { editing.p.auto.areas.splice(+del.dataset.adel, 1); editing.areaIdx = null; editing.dirty = true; renderEdit(); }
-});
-$('#edAreaList').addEventListener('input', e => {
-  const li = e.target.closest('.area-row'); if (!li) return;
-  editing.p.auto.areas[+li.dataset.i].name = e.target.value.trim(); editing.dirty = true;
-});
-$('#btnTry').addEventListener('click', () => {
-  if (!autoReady(editing.p)) return;
-  checking.product = editing.p; checking.test = true;
-  go('shoot'); startShoot();
-});
 
 // 見本写真の上を指でなぞって四角を描く
 function picPoint(e) {
@@ -985,39 +806,30 @@ $('#edPicWrap').addEventListener('pointerdown', e => {
 });
 $('#edPicWrap').addEventListener('pointermove', e => {
   if (!editing.drawStart) return;
-  const preview = editAreas().slice();
+  const preview = editing.p.color.areas.slice();
   preview[editing.areaIdx] = rectOf(editing.drawStart, picPoint(e));
-  if (editing.areaKind === 'color') drawColorMarks(preview); else drawMarks($('#edMarks'), editing.p.items, null, preview);
+  drawColorMarks(preview);
 });
 $('#edPicWrap').addEventListener('pointerup', e => {
   if (!editing.drawStart) return;
   const a = rectOf(editing.drawStart, picPoint(e));
   editing.drawStart = null;
-  if (a.w < 0.03 || a.h < 0.03) { showError('四角が小さすぎます。ラベルの場所を指でなぞって囲んでください。'); renderEdit(); return; }
-  const kind = editing.areaKind, areas = editAreas(), idx = editing.areaIdx, old = areas[idx];
-  areas[idx] = Object.assign({}, a, { name: old ? old.name : '' });
-  if (kind === 'color') areas[idx].drawn = a; // 色で判定：囲んだ四角は残しておき、測り直すときに使う
+  if (a.w < 0.03 || a.h < 0.03) { showError('四角が小さすぎます。見たい場所を指でなぞって囲んでください。'); renderEdit(); return; }
+  const areas = editing.p.color.areas, idx = editing.areaIdx, old = areas[idx];
+  // 囲んだ四角は drawn に残しておき、測り直すときに使う。見るもの（look）は囲み直しても変えない
+  areas[idx] = Object.assign({}, a, { name: old ? old.name : '', drawn: a }, old && old.look ? { look: old.look } : {});
   editing.areaIdx = null; editing.dirty = true;
-  if (kind === 'color') measureColorArea(areas[idx]); // 囲んだ中でいちばん多い鮮やかな色を、その場所の色にする
+  measureColorArea(areas[idx]);
   renderEdit();
 });
 
 $('#edPicWrap').addEventListener('click', async e => {
-  if (editing.pickAnchor && editing.p.image) {
-    const pt = picPoint(e);
-    editing.pickAnchor = false;
-    const r = await ColorJudge.pickAnchor(editing.p.image, pt.x, pt.y);
-    if (r.error) showError(r.error);
-    else { editing.p.color.anchor = r; editing.dirty = true; editing.p.color.areas.forEach(a => measureColorArea(a)); } // 目印の色は場所の色に選ばないため、測り直す
-    renderEdit();
-    return;
-  }
-  if (editing.marking == null || !editing.p.image) return;
-  const r = $('#edPic').getBoundingClientRect();
-  const it = editing.p.items[editing.marking];
-  it.x = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
-  it.y = Math.min(1, Math.max(0, (e.clientY - r.top) / r.height));
-  editing.marking = null; editing.dirty = true;
+  if (!editing.pickAnchor || !editing.p.image) return;
+  const pt = picPoint(e);
+  editing.pickAnchor = false;
+  const r = await ColorJudge.pickAnchor(editing.p.image, pt.x, pt.y);
+  if (r.error) showError(r.error);
+  else { editing.p.color.anchor = r; editing.dirty = true; editing.p.color.areas.forEach(a => measureColorArea(a)); } // 目印の色は場所の色に選ばないため、測り直す
   renderEdit();
 });
 $('#btnEdPhoto').addEventListener('click', () => $('#edPhotoInput').click());
@@ -1027,31 +839,34 @@ $('#edPhotoInput').addEventListener('change', () => {
 });
 async function setEditPhoto(f) {
   try {
-    const had = editing.p.image && (editing.p.items.some(it => it.x != null) || editing.p.auto.areas.length || editing.p.color.areas.length);
+    const had = editing.p.image && editing.p.color.areas.length;
     editing.p.image = await fileToJpeg(f, 1280);
     editing.dirty = true;
-    // 色で判定：目印は選び直してもらい、場所の色は新しい写真で測り直す
+    // 目印は選び直してもらい、場所は新しい写真で測り直す（目印を選んだときに測る）
     editing.p.color.anchor = null;
-    editing.p.color.areas.forEach(a => measureColorArea(a));
+    editing.p.color.areas.forEach(a => { a.color = null; });
     renderEdit();
-    if (had) showInfo('写真を変えました。番号の印やラベルの場所の四角がずれていたら、付け直してください。');
+    if (had) showInfo('写真を変えました。目印を選び直してください。判定する場所の四角がずれていたら、囲み直してください。');
   } catch (e) { showError(e.message); }
 }
-// ---- 色で判定の設定 ----
+// ---- 自動判定の設定 ----
 function drawColorMarks(preview) {
   const c = editing.p.color, el = $('#edColorMarks');
   if (!c) { el.innerHTML = ''; return; }
-  drawMarks(el, [], null, preview || c.areas, null, c.anchor ? c.anchor.box : null, 'carea');
+  drawMarks(el, preview || c.areas, null, c.anchor ? c.anchor.box : null);
 }
-// 囲んだ四角（drawn）の中で、目印と違う色のうちいちばん多い色を測り、場所の四角はその色のある部分に合わせて小さくする
+// 囲んだ四角（drawn）で、場所の見るものを測る
+//   色：目印と違う色のうちいちばん多い色を測り、場所の四角はその色のある部分に合わせて小さくする
+//   グレーのキャップ：囲んだ四角のまま、いちばん大きいグレーのかたまりの大きさを測る
 // （v20261027-1 で登録した場所には drawn が無いので、その場所の四角のまま測る）
 async function measureColorArea(a) {
   if (!editing.p.image) return;
   const drawn = a.drawn || { x: a.x, y: a.y, w: a.w, h: a.h };
   a.drawn = drawn;
-  if (a.look === 'smooth') { // なめらかさで見る場所（キャップなど）：囲んだ四角のまま、なめらかさを測る
+  if (a.look === 'gray') {
     Object.assign(a, drawn);
-    a.color = await ColorJudge.measureSmooth(editing.p.image, drawn); a.fitv = ColorJudge.FIT_VERSION;
+    a.color = editing.p.color.anchor ? await ColorJudge.measureGray(editing.p.image, drawn, editing.p.color.anchor) : null;
+    a.fitv = ColorJudge.FIT_VERSION;
     renderEdit();
     return;
   }
@@ -1074,60 +889,58 @@ function renderColor() {
   ba.classList.toggle('on', editing.pickAnchor);
   ba.textContent = editing.pickAnchor ? '選ぶのをやめる' : c.anchor ? '目印を選び直す' : '目印をタップして選ぶ';
   $('#cjAreaList').innerHTML = c.areas.map((a, i) => {
-    const on = editing.areaKind === 'color' && editing.areaIdx === i;
-    const smooth = a.look === 'smooth';
-    const amount = !a.color ? '測っています…' : smooth ? `なめらか ${Math.round(a.color.base * 100)}%`
+    const on = editing.areaIdx === i;
+    const gray = a.look === 'gray';
+    const amount = !a.color ? '測っています…' : gray ? `グレー ${a.color.base.toFixed(2)}倍`
       : `${a.color.base ? colorName(a.color.h) + ' ' : ''}${(a.color.base * 100).toFixed(1)}%`;
     // スマホの幅でも押しやすいよう 2 段にする（上：番号・名前・量／下：見るもの・囲み直す・削除）
     return `<li class="area-row c-row${on ? ' on' : ''}" data-i="${i}">
-      <span class="area-no c">${i + 1}</span>${smooth ? '<span class="swatch smooth"></span>' : swatch(a.color)}
+      <span class="area-no c">${i + 1}</span>${gray ? '<span class="swatch smooth"></span>' : swatch(a.color)}
       <input type="text" value="${esc(a.name || '')}" placeholder="名前（任意）例：充シール">
-      <small class="amount" title="見本でのこの色の量・なめらかさ">${amount}</small>
+      <small class="amount" title="見本でのこの色の量・キャップの大きさ（目印の何倍か）">${amount}</small>
       <div class="row2">
-        <label class="look">見るもの <select data-look="${i}"><option value="color"${smooth ? '' : ' selected'}>色</option><option value="smooth"${smooth ? ' selected' : ''}>なめらかさ（キャップなど）</option></select></label>
+        <label class="look">見るもの <select data-look="${i}"><option value="color"${gray ? '' : ' selected'}>色</option><option value="gray"${gray ? ' selected' : ''}>グレーのキャップ</option></select></label>
         <button data-redo="${i}">${on ? 'やめる' : '囲み直す'}</button>
         <button class="del" data-adel="${i}">削除</button>
       </div>
     </li>`;
   }).join('');
-  const bb = $('#btnCjArea'), adding = editing.areaKind === 'color' && editing.areaIdx === c.areas.length;
+  const bb = $('#btnCjArea'), adding = editing.areaIdx === c.areas.length;
   bb.disabled = !p.image || !c.anchor; // 目印の色を場所の色に選ばないため、目印を先に選ぶ
   bb.classList.toggle('on', adding);
   bb.textContent = adding ? '囲むのをやめる' : c.areas.length ? '＋ 場所を追加して囲む' : '判定する場所を囲む';
   $('#btnCjTry').disabled = !colorReady(p);
-  // 見本と見比べる自動判定の「判定を試す」は、色で判定が使えるときは使わない（色で判定が優先されるため）
-  $('#btnTry').disabled = !autoReady(p) || colorReady(p);
 
   const st = $('#cjStatus');
   const lack = [!p.image && '見本の写真', !c.anchor && '目印', !c.areas.length && '判定する場所'].filter(Boolean);
-  if (!c.anchor && !c.areas.length) { st.className = 'auto-status'; st.textContent = '色で判定は使っていません。'; return; }
-  if (lack.length) { st.className = 'auto-status warn'; st.textContent = `色で判定には、あと「${lack.join('」「')}」が必要です。`; return; }
-  const few = c.areas.map((a, i) => a.color && a.color.kind !== 'smooth' && a.color.base < ColorJudge.MIN_BASE ? areaName(a, i) : '').filter(Boolean);
-  const rough = c.areas.map((a, i) => a.color && a.color.kind === 'smooth' && a.color.base < ColorJudge.SMOOTH_MIN ? areaName(a, i) : '').filter(Boolean);
+  if (!c.anchor && !c.areas.length) { st.className = 'auto-status warn'; st.textContent = '自動判定には「目印」と「判定する場所」が必要です。'; return; }
+  if (lack.length) { st.className = 'auto-status warn'; st.textContent = `自動判定には、あと「${lack.join('」「')}」が必要です。`; return; }
+  const few = c.areas.map((a, i) => a.color && !a.color.kind && a.color.base < ColorJudge.MIN_BASE ? areaName(a, i) : '').filter(Boolean);
+  const nocap = c.areas.map((a, i) => a.color && a.color.kind === 'gray' && a.color.base < ColorJudge.GRAY_MIN ? areaName(a, i) : '').filter(Boolean);
   // 目印と同じ色（例：黄色の映り込み）が場所の色になっていると、ラベルが無くても「あり」になりやすい（v20261027-1 で登録した場所）
-  const same = c.areas.map((a, i) => a.color && a.color.kind !== 'smooth' && a.color.base && ColorJudge.hueDist(a.color.h, c.anchor.h) <= ColorJudge.AVOID_TOL ? areaName(a, i) : '').filter(Boolean);
+  const same = c.areas.map((a, i) => a.color && !a.color.kind && a.color.base && ColorJudge.hueDist(a.color.h, c.anchor.h) <= ColorJudge.AVOID_TOL ? areaName(a, i) : '').filter(Boolean);
   if (same.length) { st.className = 'auto-status warn'; st.textContent = `目印と同じ色が、場所の色として選ばれています：${same.join('、')}。「囲み直す」で囲み直してください。`; return; }
-  if (rough.length) { st.className = 'auto-status warn'; st.textContent = `なめらかさで見る場所が、見本の写真でなめらかではありません：${rough.join('、')}。キャップの平らな面だけを囲み直してください。`; return; }
-  if (few.length) { st.className = 'auto-status warn'; st.textContent = `色がほとんど無い場所があります：${few.join('、')}。はっきりした色（赤・青など）がある部分を囲み直してください。灰色のキャップなど色で見分けられない物は、その場所の「見るもの」を「なめらかさ」にしてください。`; return; }
+  if (nocap.length) { st.className = 'auto-status warn'; st.textContent = `グレーのキャップで見る場所に、見本の写真でキャップが見つかりません：${nocap.join('、')}。キャップ全体が入るように、口の上を広めに囲み直してください。`; return; }
+  if (few.length) { st.className = 'auto-status warn'; st.textContent = `色がほとんど無い場所があります：${few.join('、')}。はっきりした色（赤・青など）がある部分を囲み直してください。灰色のオーバーキャップは、その場所の「見るもの」を「グレーのキャップ」にしてください。`; return; }
   if (!colorReady(p)) { st.className = 'auto-status'; st.textContent = '場所の色を測っています…'; return; }
   st.className = 'auto-status ok';
-  st.textContent = `色で判定の準備ができました（${c.areas.length} か所）。見本と見比べる自動判定より、こちらを優先して使います。「判定を試す」で確かめてください。`;
+  st.textContent = `自動判定の準備ができました（${c.areas.length} か所）。「判定を試す」で確かめてください。`;
 }
 $('#btnCjAnchor').addEventListener('click', () => {
-  editing.pickAnchor = !editing.pickAnchor; editing.areaIdx = null; editing.marking = null;
+  editing.pickAnchor = !editing.pickAnchor; editing.areaIdx = null;
   renderEdit();
   if (editing.pickAnchor) $('#edPicWrap').scrollIntoView({ behavior: 'smooth', block: 'center' });
 });
-$('#btnCjArea').addEventListener('click', () => startArea(editing.p.color.areas.length, 'color'));
+$('#btnCjArea').addEventListener('click', () => startArea(editing.p.color.areas.length));
 $('#cjAreaList').addEventListener('click', e => {
   const redo = e.target.closest('[data-redo]'), del = e.target.closest('[data-adel]');
-  if (redo) startArea(+redo.dataset.redo, 'color');
+  if (redo) startArea(+redo.dataset.redo);
   if (del) { editing.p.color.areas.splice(+del.dataset.adel, 1); editing.areaIdx = null; editing.dirty = true; renderEdit(); }
 });
 $('#cjAreaList').addEventListener('change', e => {
   const sel = e.target.closest('[data-look]'); if (!sel) return;
   const a = editing.p.color.areas[+sel.dataset.look];
-  if (sel.value === 'smooth') a.look = 'smooth'; else delete a.look;
+  if (sel.value === 'gray') a.look = 'gray'; else delete a.look;
   a.color = null; editing.dirty = true;
   renderEdit();
   measureColorArea(a);
@@ -1148,13 +961,9 @@ $('#btnSave').addEventListener('click', async () => {
   p.name = $('#edName').value.trim();
   p.code = $('#edCode').value.trim();
   p.kind = $('#edKind').value;
-  p.items = p.items.map(it => Object.assign(it, { text: it.text.trim() })).filter(it => it.text);
+  delete p.items; delete p.auto; // 20261028-4 までの「目視で確認する項目」「見本と見比べて判定」の設定は使わないので消す
   if (!p.name) { showError('製品名を入れてください。'); $('#edName').focus(); return; }
-  if (!p.items.length && !methodOf(p)) { showError('色で判定・見本と見比べる自動判定のどちらかの設定か、目視で確認する項目を1つ以上入れてください。'); renderEdit(); return; }
-  if (!colorReady(p) && (p.color.anchor || p.color.areas.length) &&
-      !confirm('色で判定の設定が途中のため、色で判定は使われません（目印と、判定する場所が1つ以上必要です）。このまま保存しますか？')) return;
-  if (!colorReady(p) && !autoReady(p) && (p.auto.ng.length || p.auto.areas.length) &&
-      !confirm('自動判定の設定が途中のため、自動判定は使われません（ラベルなしの写真とラベルの場所の両方が必要です）。このまま保存しますか？')) return;
+  if (!colorReady(p)) { showError('自動判定の設定（見本の写真・目印・判定する場所）を入れてください。'); renderEdit(); return; }
   if (data.products.some(x => x.id !== p.id && x.name === p.name)) { showError('同じ製品名がすでに登録されています。'); return; }
   p.updatedAt = new Date().toISOString();
   const i = data.products.findIndex(x => x.id === p.id);

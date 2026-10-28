@@ -8,7 +8,7 @@
 <title>包装チェックアプリ</title>
 <!-- アプリの版。版を上げるときは、ここだけを書き換える（app.js もこの値を使う）。
      ファイルは「?v=版」を付けて読むので、版が変われば iPhone も必ず新しいファイルを読む（前の版のファイルと混ざらない） -->
-<meta name="app-version" content="20261028-4">
+<meta name="app-version" content="20261028-5">
 <script>
   document.write(['common/appkit.css', 'style.css'].map(function (f) {
     return '<link rel="stylesheet" href="' + f + '?v=' + document.querySelector('meta[name="app-version"]').content + '">';
@@ -38,7 +38,7 @@
     <div id="productList" class="product-list"></div>
     <div id="emptyList" class="empty" hidden>
       <p>まだ見本が登録されていません。</p>
-      <p>右上の「見本の登録」から、製品ごとに正しい包装状態の見本写真とチェック項目を登録してください。<br>
+      <p>右上の「見本の登録」から、製品ごとに正しい包装状態の見本写真と自動判定の設定を登録してください。<br>
          または、管理者からもらった見本データのファイルを読み込んでください。</p>
     </div>
   </section>
@@ -76,13 +76,12 @@
         <span class="dz-icon">🖼</span>
         <span class="dz-text"><b>保存した写真で判定する</b><small>タップして写真を選ぶ（パソコンでは、写真をこの画面にドロップしても可）</small></span>
       </button>
-      <button id="btnNoPhoto" class="btn ghost-btn">撮影しないでチェック</button>
     </div>
     <input id="photoInput" type="file" accept="image/*" capture="environment" hidden>
     <input id="pickInput" type="file" accept="image/*" hidden>
   </section>
 
-  <!-- ③ 見比べてチェック -->
+  <!-- ③ 結果 -->
   <section id="viewCheck" class="view" hidden>
     <div class="compare" id="compare">
       <figure><figcaption>見本</figcaption><div class="pic"><img id="cmpSample" alt="見本"><div class="marks" id="cmpSampleMarks"></div></div></figure>
@@ -91,8 +90,6 @@
     <div class="result" id="result" hidden></div>
     <div class="score" id="score" hidden></div>
     <p class="hint">写真をタップすると大きく表示します。</p>
-    <p class="list-title" id="checklistTitle" hidden>目視でも確認</p>
-    <ol class="checklist" id="checklist"></ol>
     <div class="actions">
       <button id="btnNext" class="btn primary big">次の容器へ</button>
       <button id="btnRetake" class="btn">撮り直す</button>
@@ -137,7 +134,6 @@
       <p class="sub">正しく包装・ラベル貼付された状態を、チェックするときと同じ向き・距離で撮ってください。</p>
       <div class="edit-pic" id="edPicWrap">
         <img id="edPic" alt="見本の写真" hidden>
-        <div class="marks" id="edMarks"></div>
         <div class="marks" id="edColorMarks"></div>
         <div class="edit-pic-empty" id="edPicEmpty">写真がありません</div>
       </div>
@@ -148,9 +144,9 @@
       <input id="edPhotoInput" type="file" accept="image/*" hidden>
     </div>
     <div class="card" id="colorCard">
-      <h2>色で判定（機械が判定・おすすめ）</h2>
-      <p class="sub">いつも貼ってある「目印」（例：黄色い楕円）を基準に、決めた場所に決めた色（例：充シールの赤、Lot シールの印刷の青）があるかを機械が判定します。
-        手持ちで角度や距離が変わっても判定しやすい方式です。上の見本写真は、ラベルがすべて正しく貼られた写真にしてください。</p>
+      <h2>自動判定の設定</h2>
+      <p class="sub">いつも貼ってある「目印」（例：黄色い楕円）を基準に、決めた場所に、ラベルやキャップがあるかを機械が判定します。
+        手持ちで角度や距離が変わっても判定しやすい方式です。上の見本写真は、ラベルがすべて正しく貼られ、キャップも付いている写真にしてください。</p>
       <div class="step">
         <b>① 目印</b>
         <small>ボタンを押してから、見本写真の「いつも貼ってある、鮮やかな色の部分」（例：黄色い楕円のふち）をタップしてください。</small>
@@ -159,52 +155,17 @@
       </div>
       <div class="step">
         <b>② 判定する場所（複数可）</b>
-        <small>①の目印を選んでから、ボタンを押して、見本写真の上を指でなぞって色で確かめたい部分（例：赤い充シール、白い Lot 枠）を囲んでください。
-          囲んだ中で、目印と違う色のうちいちばん多い鮮やかな色を、その場所の色にします。四角は、その色のある部分に合わせて自動で小さくなります。
-          ほかのラベル（下の大きなラベルなど）が入らないように囲んでください。1か所でも色が無ければ不合格になります。<br>
-          灰色のオーバーキャップのように色で見分けられない物は、囲んだあと「見るもの」を「なめらかさ」にします（キャップの平らな面だけを囲む）。
-          キャップがあると表面がなめらか、無いとステンレスの映り込みで模様が多くなることで判定します。その場合は、チェックのときもキャップまで写るように撮ってください。</small>
+        <small>①の目印を選んでから、ボタンを押して、見本写真の上を指でなぞって確かめたい場所を囲み、場所ごとに「見るもの」を選びます。1か所でも無ければ不合格になります。<br>
+          ・<b>色</b>（充シール・Lot シールなど）：赤い充シール、白い Lot 枠などを囲みます。囲んだ中で、目印と違う色のうちいちばん多い鮮やかな色を、その場所の色にします。
+            四角は、その色のある部分に合わせて自動で小さくなります。ほかのラベル（下の大きなラベルなど）が入らないように囲んでください。<br>
+          ・<b>グレーのキャップ</b>（オーバーキャップ）：キャップが写る、容器の口の上を<b>広めに</b>囲みます（撮る角度で位置が変わるため）。
+            囲んだ中の、いちばん大きいグレーのなめらかなかたまりの大きさで判定します。キャップが無いと、ステンレスや白い部品が見えて、大きなグレーのかたまりができません。
+            チェックのときも、キャップまで写るように撮ってください。</small>
         <ol class="area-list" id="cjAreaList"></ol>
         <button class="btn" id="btnCjArea">判定する場所を囲む</button>
       </div>
       <div class="auto-status" id="cjStatus"></div>
       <button class="btn primary" id="btnCjTry">判定を試す</button>
-    </div>
-    <div class="card" id="autoCard">
-      <h2>見本と見比べて判定（色で判定を使わないとき）</h2>
-      <p class="sub">色で判定の設定があるときは、そちらを優先して使います。
-        上の見本写真は「ラベルあり」の見本になります。次の2つを登録すると、撮影したときに機械が見本と見比べて「ラベルが貼ってあるか」を判定します。</p>
-      <div class="step">
-        <b>① ラベルなしの写真</b>
-        <small>ラベルを貼っていない容器を、見本写真と同じ向き・距離で撮ってください。
-          場所ごとに別の写真でもかまいません（例：1枚目はシールなし、2枚目は別のラベルなし）。場所ごとに、違いのある写真だけを比べます。</small>
-        <div class="thumbs" id="edNgList"></div>
-        <button class="btn" data-add="ng">＋ ラベルなしの写真を撮る・選ぶ</button>
-      </div>
-      <div class="step">
-        <b>② ラベルの場所（複数可）</b>
-        <small>ボタンを押してから、上の見本写真の上を指でなぞって、ラベルのうち「あり・なしで色が変わる部分」だけを四角で囲んでください。
-          見たい場所が複数あるときは、場所を追加して囲みます。1か所でもラベルがなければ不合格になります。</small>
-        <ol class="area-list" id="edAreaList"></ol>
-        <button class="btn" id="btnArea">ラベルの場所を囲む</button>
-      </div>
-      <div class="step">
-        <b>③ ラベルありの写真を追加（任意）</b>
-        <small>判定が不安定なときに、別の「ラベルあり」の写真を足すと安定します。</small>
-        <div class="thumbs" id="edOkList"></div>
-        <button class="btn" data-add="ok">＋ ラベルありの写真を撮る・選ぶ</button>
-      </div>
-      <div class="auto-status" id="autoStatus"></div>
-      <button class="btn primary" id="btnTry">判定を試す</button>
-      <input id="edAutoInput" type="file" accept="image/*" hidden>
-    </div>
-    <div class="card">
-      <h2>目視で確認する項目</h2>
-      <p class="sub">作業者が「OK／NG」を付ける項目です（自動判定を使うときは、無くてもかまいません）。「位置」を押してから見本写真をタップすると、その場所に番号の印が付きます。</p>
-      <ol class="edit-items" id="edItems"></ol>
-      <div class="actions">
-        <button id="btnAddItem" class="btn">＋ 項目を追加</button>
-      </div>
     </div>
     <div class="actions sticky-actions">
       <button id="btnSave" class="btn primary big">保存</button>
@@ -222,7 +183,7 @@
 
 <script>
   // 読み込む順番どおりに並べる（上の app-version を付けて読む）
-  document.write(['common/appkit-ui.js', 'common/appkit-drop.js', 'lib/jsQR.js', 'judge.js', 'colorjudge.js', '見本データ.js', 'app.js'].map(function (f) {
+  document.write(['common/appkit-ui.js', 'common/appkit-drop.js', 'lib/jsQR.js', 'colorjudge.js', '見本データ.js', 'app.js'].map(function (f) {
     return '<script src="' + f + '?v=' + document.querySelector('meta[name="app-version"]').content + '"><\/script>';
   }).join(''));
 </script>

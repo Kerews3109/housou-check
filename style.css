@@ -253,3 +253,6 @@ input[type=search], .field input {
 .area-row.c-row .row2 { flex-basis: 100%; min-width: 0; display: flex; align-items: center; gap: 6px; padding-left: 8px; }
 .area-row.c-row .look { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2); }
 .area-row.c-row .look select { flex: 1; min-width: 0; font-size: 14px; padding: 6px; }
+
+/* グレーのキャップ（目印の何倍か。0〜1 倍を帯に描く：0.45 倍まで「なし」、0.55 倍から「あり」） */
+.score .bar.gray-bar { background: linear-gradient(90deg, var(--bad-soft) 0 45%, var(--warn-soft) 45% 55%, var(--good-soft) 55% 100%); }
