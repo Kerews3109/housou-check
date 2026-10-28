@@ -6,8 +6,14 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#1f6fd1">
 <title>包装チェックアプリ</title>
-<link rel="stylesheet" href="common/appkit.css">
-<link rel="stylesheet" href="style.css">
+<!-- アプリの版。版を上げるときは、ここだけを書き換える（app.js もこの値を使う）。
+     ファイルは「?v=版」を付けて読むので、版が変われば iPhone も必ず新しいファイルを読む（前の版のファイルと混ざらない） -->
+<meta name="app-version" content="20261028-1">
+<script>
+  document.write(['common/appkit.css', 'style.css'].map(function (f) {
+    return '<link rel="stylesheet" href="' + f + '?v=' + document.querySelector('meta[name="app-version"]').content + '">';
+  }).join(''));
+</script>
 </head>
 <body>
 
@@ -212,12 +218,11 @@
   包装チェックアプリ <span id="appVersion"></span> ／ 共通部品 <span id="kitVersion"></span>
 </footer>
 
-<script src="common/appkit-ui.js"></script>
-<script src="common/appkit-drop.js"></script>
-<script src="lib/jsQR.js"></script>
-<script src="judge.js"></script>
-<script src="colorjudge.js"></script>
-<script src="見本データ.js"></script>
-<script src="app.js"></script>
+<script>
+  // 読み込む順番どおりに並べる（上の app-version を付けて読む）
+  document.write(['common/appkit-ui.js', 'common/appkit-drop.js', 'lib/jsQR.js', 'judge.js', 'colorjudge.js', '見本データ.js', 'app.js'].map(function (f) {
+    return '<script src="' + f + '?v=' + document.querySelector('meta[name="app-version"]').content + '"><\/script>';
+  }).join(''));
+</script>
 </body>
 </html>

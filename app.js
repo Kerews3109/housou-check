@@ -11,7 +11,7 @@
      配布用に 見本データ.js を書き出してアプリのフォルダに入れると、開いた時点で見本が入る（手元より新しければ置き換え）。
    ============================================================ */
 
-const APP_VERSION = '20261027-8';
+const APP_VERSION = document.querySelector('meta[name="app-version"]').content; // 版は index.html の app-version に書く
 const DATA_FILE = '見本データ.json';  // スマホどうしの受け渡し用
 const BUNDLE_FILE = '見本データ.js'; // 配布するアプリに同梱する用
 const { $, esc, showError, showInfo, hideBanners, download } = AppKit.ui;
@@ -1147,6 +1147,33 @@ $('#btnDelete').addEventListener('click', async () => {
 /* ---------- 起動 ---------- */
 $('#btnBack').addEventListener('click', back);
 $('#appVersion').textContent = 'v' + APP_VERSION;
+
+/* ---------- 新しい版の確認 ----------
+   置き場（https）の index.html を、手元の控えを使わずに読み直して版を比べる（アプリを開いたとき・ほかのアプリから戻ったとき）。
+   新しい版があれば：製品の一覧の画面なら、すぐ読み込み直す。チェックや見本の編集の途中なら、お知らせを出して、押したら読み込み直す。
+   cache: 'reload' で読むと、iPhone の控えも新しい index.html に置き換わるので、読み込み直すと新しい版になる。
+   同じ版のために 2 回以上は自動で読み込み直さない（置き場の更新が届いていないときに、読み込み直しをくり返さないため）。
+   ファイルを直接開いたときなど、読めないときは何もしない */
+async function checkUpdate() {
+  if (location.protocol !== 'https:' && location.protocol !== 'http:') return;
+  try {
+    const html = await (await fetch('index.html', { cache: 'reload' })).text();
+    const m = /<meta name="app-version" content="([^"]+)"/.exec(html);
+    if (!m || m[1] === APP_VERSION) return;
+    let tried = '';
+    try { tried = sessionStorage.getItem('housou-reloaded-for') || ''; } catch (e) { /* 読めなくても続ける */ }
+    if (current === 'list' && tried !== m[1]) {
+      try { sessionStorage.setItem('housou-reloaded-for', m[1]); } catch (e) { /* 保存できなくても続ける */ }
+      location.reload();
+      return;
+    }
+    showInfo(`新しい版（v${m[1]}）があります。このお知らせを押すと読み込み直します（チェックの途中なら、終わってから押してください）。`);
+    // ほかのお知らせに変わったあとは押しても読み込み直さない
+    $('#infoBanner span').onclick = e => { if (e.currentTarget.textContent.startsWith('新しい版')) location.reload(); };
+  } catch (e) { /* 通信できないときは、今の版のまま使う */ }
+}
+checkUpdate();
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkUpdate(); });
 $('#kitVersion').textContent = AppKit.VERSION;
 
 // アプリに同梱した 見本データ.js（window.MIHON_DATA）が手元より新しければ使う。
