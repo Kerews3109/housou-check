@@ -247,3 +247,9 @@ input[type=search], .field input {
 .swatch.smooth { background: linear-gradient(135deg, #c9ccd1, #8d9298); }
 .area-row select { flex: none; font-size: 13px; padding: 4px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); }
 .score .bar.smooth-bar { background: linear-gradient(90deg, var(--bad-soft) 0 45%, var(--warn-soft) 45% 50%, var(--good-soft) 50% 100%); }
+
+/* 色で判定の場所の行：2 段（スマホの幅で名前の欄がつぶれないように） */
+.area-row.c-row { flex-wrap: wrap; row-gap: 6px; }
+.area-row.c-row .row2 { flex-basis: 100%; min-width: 0; display: flex; align-items: center; gap: 6px; padding-left: 8px; }
+.area-row.c-row .look { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2); }
+.area-row.c-row .look select { flex: 1; min-width: 0; font-size: 14px; padding: 6px; }

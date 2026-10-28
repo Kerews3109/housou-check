@@ -1078,13 +1078,16 @@ function renderColor() {
     const smooth = a.look === 'smooth';
     const amount = !a.color ? '測っています…' : smooth ? `なめらか ${Math.round(a.color.base * 100)}%`
       : `${a.color.base ? colorName(a.color.h) + ' ' : ''}${(a.color.base * 100).toFixed(1)}%`;
-    return `<li class="area-row${on ? ' on' : ''}" data-i="${i}">
+    // スマホの幅でも押しやすいよう 2 段にする（上：番号・名前・量／下：見るもの・囲み直す・削除）
+    return `<li class="area-row c-row${on ? ' on' : ''}" data-i="${i}">
       <span class="area-no c">${i + 1}</span>${smooth ? '<span class="swatch smooth"></span>' : swatch(a.color)}
       <input type="text" value="${esc(a.name || '')}" placeholder="名前（任意）例：充シール">
-      <select data-look="${i}" title="この場所で見るもの"><option value="color"${smooth ? '' : ' selected'}>色</option><option value="smooth"${smooth ? ' selected' : ''}>なめらかさ</option></select>
-      <small class="amount" title="見本でのこの色の量">${amount}</small>
-      <button data-redo="${i}">${on ? 'やめる' : '囲み直す'}</button>
-      <button class="del" data-adel="${i}">削除</button>
+      <small class="amount" title="見本でのこの色の量・なめらかさ">${amount}</small>
+      <div class="row2">
+        <label class="look">見るもの <select data-look="${i}"><option value="color"${smooth ? '' : ' selected'}>色</option><option value="smooth"${smooth ? ' selected' : ''}>なめらかさ（キャップなど）</option></select></label>
+        <button data-redo="${i}">${on ? 'やめる' : '囲み直す'}</button>
+        <button class="del" data-adel="${i}">削除</button>
+      </div>
     </li>`;
   }).join('');
   const bb = $('#btnCjArea'), adding = editing.areaKind === 'color' && editing.areaIdx === c.areas.length;
@@ -1105,7 +1108,7 @@ function renderColor() {
   const same = c.areas.map((a, i) => a.color && a.color.kind !== 'smooth' && a.color.base && ColorJudge.hueDist(a.color.h, c.anchor.h) <= ColorJudge.AVOID_TOL ? areaName(a, i) : '').filter(Boolean);
   if (same.length) { st.className = 'auto-status warn'; st.textContent = `目印と同じ色が、場所の色として選ばれています：${same.join('、')}。「囲み直す」で囲み直してください。`; return; }
   if (rough.length) { st.className = 'auto-status warn'; st.textContent = `なめらかさで見る場所が、見本の写真でなめらかではありません：${rough.join('、')}。キャップの平らな面だけを囲み直してください。`; return; }
-  if (few.length) { st.className = 'auto-status warn'; st.textContent = `色がほとんど無い場所があります：${few.join('、')}。はっきりした色（赤・青など）がある部分を囲み直してください。`; return; }
+  if (few.length) { st.className = 'auto-status warn'; st.textContent = `色がほとんど無い場所があります：${few.join('、')}。はっきりした色（赤・青など）がある部分を囲み直してください。灰色のキャップなど色で見分けられない物は、その場所の「見るもの」を「なめらかさ」にしてください。`; return; }
   if (!colorReady(p)) { st.className = 'auto-status'; st.textContent = '場所の色を測っています…'; return; }
   st.className = 'auto-status ok';
   st.textContent = `色で判定の準備ができました（${c.areas.length} か所）。見本と見比べる自動判定より、こちらを優先して使います。「判定を試す」で確かめてください。`;
