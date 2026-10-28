@@ -133,9 +133,10 @@ const areaName = (a, i) => `${'①②③④⑤⑥⑦⑧⑨⑩'[i] || i + 1}${a.n
 const colorReady = p => !!(p && p.image && p.color && p.color.anchor && p.color.areas && p.color.areas.length && p.color.areas.every(a => a.color));
 const methodOf = p => colorReady(p) ? 'color' : null;
 /* 真上から撮る写真（オーバーキャップ。20261028-6 から。任意）
-   p.top = { image（真上の見本写真）, base（見本で、枠の中のいちばん大きいグレーのかたまりが枠の何割か） }
+   p.top = { image（真上の見本写真）, base（見本で、枠の中のいちばん大きいグレーのかたまりが枠の何割か）,
+             w, h, fill, touch（そのかたまりの形。20261028-7 から。キャップ以外のグレーの物を「あり」にしないために比べる） }
    設定があると、横から撮った判定が合格したあと、続けて真上から撮って判定する（目印は使わず、画面の枠に容器の口を合わせてもらう） */
-const topReady = p => !!(p && p.top && p.top.image && p.top.base >= ColorJudge.TOP_MIN);
+const topReady = p => !!(p && p.top && p.top.image && p.top.base >= ColorJudge.TOP_MIN && !(p.top.touch > ColorJudge.TOP_TOUCH));
 const TOP_NAME = 'オーバーキャップ（真上）';
 
 // 真上の写真の枠（容器の口を合わせる枠）を描く。state は 'pass' / 'fail' / 'unsure'
@@ -536,14 +537,16 @@ function topDecided(shot, r) {
 /* 自動判定（色で判定で、カメラを画面に映しているとき）
    映像を AUTO_EVERY ミリ秒おきに判定し、同じ結果（場所ごとのあり・なしまで同じ）が続いたら、その映像で決める。
    写す途中のぶれた・半分だけ写った映像で決めないよう、合格は AUTO_PASS 回、不合格は AUTO_FAIL 回続けて同じときだけ決める
-   （不合格の取り違えのほうが作業を止めるので、少し長く見る）。「判定できない」は数えない */
-const AUTO_EVERY = 300, AUTO_PASS = 3, AUTO_FAIL = 5;
-const auto = { timer: 0, busy: false, hist: [] };
+   （不合格の取り違えのほうが作業を止めるので、少し長く見る）。「判定できない」は数えない
+   真上の段階：横から真上へカメラを動かす途中の景色で決めないよう、始めの AUTO_TOP_WAIT ミリ秒は決めず、不合格は AUTO_TOP_FAIL 回続けて決める */
+const AUTO_EVERY = 300, AUTO_PASS = 3, AUTO_FAIL = 5, AUTO_TOP_FAIL = 8, AUTO_TOP_WAIT = 1000;
+const auto = { timer: 0, busy: false, hist: [], since: 0 };
 function startAuto() {
   stopAuto();
   if (methodOf(checking.product) !== 'color') return;
   $('#liveStatus').hidden = false;
   $('#liveStatus').textContent = checking.step === 'top' ? '容器の口（キャップ）を緑の枠に合わせてください…' : '目印（例：黄色い楕円）を探しています…';
+  auto.since = Date.now();
   auto.timer = setInterval(autoTick, AUTO_EVERY);
 }
 function stopAuto() {
@@ -570,12 +573,14 @@ async function autoTick() {
     if (!top) drawMarks($('#liveMarks'), r.anchorBox ? r.areas.map(a => a.box) : [], r.areas.map(a => a.verdict), r.anchorBox || null);
     const sig = r.verdict === 'unsure' ? '' : top ? r.verdict : r.verdict + ':' + r.areas.map(a => a.verdict).join(',');
     auto.hist.push(sig);
-    if (auto.hist.length > AUTO_FAIL) auto.hist.shift();
+    if (auto.hist.length > AUTO_TOP_FAIL) auto.hist.shift();
     let n = 0; for (let i = auto.hist.length - 1; i >= 0 && auto.hist[i] === sig; i--) n++;
     $('#liveStatus').textContent = r.why === 'noanchor' ? '目印（例：黄色い楕円）を探しています…'
+      : top && r.why === 'shape' ? 'キャップの形・大きさが見本と違います。真上から、容器の口を緑の枠に合わせてください。'
       : !sig ? (top ? 'はっきりしません。真上から、容器の口を緑の枠に合わせてください。' : 'はっきりしません。目印と判定する場所がはっきり写るようにしてください。')
       : '判定しています…そのまま動かさないでください。';
-    if (sig && n >= (r.verdict === 'pass' ? AUTO_PASS : AUTO_FAIL)) {
+    const need = r.verdict === 'pass' ? AUTO_PASS : top ? AUTO_TOP_FAIL : AUTO_FAIL;
+    if (sig && n >= need && !(top && Date.now() - auto.since < AUTO_TOP_WAIT)) {
       stopAuto();
       const shot = c.toDataURL('image/jpeg', 0.82);
       if (top) topDecided(shot, r); else sideDecided(shot, r);
@@ -709,7 +714,7 @@ function renderCheck() {
   const topRow = !top ? '' : top.ratio == null
     ? `<div class="score-row"><b>${TOP_NAME}</b>：見本の真上の写真でキャップが見つからないため、判定できません</div>`
     : `<div class="score-row"><b>${TOP_NAME}</b>　グレーのかたまり 枠の ${Math.round(top.ratio * 100)}%（見本 ${Math.round(top.base * 100)}% の ${Math.round(top.ratio / top.base * 100)}%。` +
-      `${Math.round(top.on * 1000) / 10}%以上で「あり」、${Math.round(top.off * 1000) / 10}%以下で「なし」）
+      `${Math.round(top.on * 1000) / 10}%以上で「あり」、${Math.round(top.off * 1000) / 10}%以下で「なし」）${top.why === 'shape' ? '<br>※ 形・大きさが見本のキャップと違うため「判定できません」' : ''}
         <div class="bar top-bar"><i style="left:${Math.min(100, top.ratio / top.base * 100)}%"></i></div></div>`;
   if (!sc.hidden) {
     sc.innerHTML = `色の量（見本での量の ${Math.round(ColorJudge.ON * 100)}%以上で「あり」、${Math.round(ColorJudge.OFF * 100)}%以下で「なし」。グレーのキャップは、その行に書いた大きさ）` +
@@ -749,7 +754,7 @@ function renderCheck() {
     r.innerHTML = `<div class="r-big">不合格</div><div class="r-sub">ない場所：${TOP_NAME}</div>`;
   } else if (top && fin === 'unsure') {
     r.className = 'result unsure';
-    r.innerHTML = `<div class="r-big">判定できません</div><div class="r-sub">${TOP_NAME}：${top.why === 'nobase' ? '見本の真上の写真でキャップが見つかっていません（見本の登録を見直してください）' : 'はっきりしません'}<br>「撮り直す」で、横からもう一度撮ってください。</div>`;
+    r.innerHTML = `<div class="r-big">判定できません</div><div class="r-sub">${TOP_NAME}：${top.why === 'nobase' ? '見本の真上の写真でキャップが見つかっていません（見本の登録を見直してください）' : top.why === 'shape' ? 'グレーの物の形・大きさが、見本のキャップと違います（容器の口が緑の枠に合っていないか、キャップ以外の物が写っています）' : 'はっきりしません'}<br>「撮り直す」で、横からもう一度撮ってください。</div>`;
   } else if (auto.verdict === 'fail') {
     r.className = 'result fail';
     r.innerHTML = `<div class="r-big">不合格</div><div class="r-sub">${areas.length > 1 ? 'ない場所：' + namesWith(areas, auto, 'fail') : 'ラベルが貼られていません。'}</div>`;
@@ -847,6 +852,11 @@ function openEdit(p) {
   editing.p = p ? JSON.parse(JSON.stringify(p)) : { id: newId(), name: '', code: '', image: '' };
   editing.p.color = Object.assign({ anchor: null, areas: [] }, editing.p.color);
   if (editing.p.top && !editing.p.top.image) delete editing.p.top;
+  // 20261028-6 で登録した真上の見本には、キャップの形が無いので測る
+  if (editing.p.top && editing.p.top.w == null) {
+    const t = editing.p.top;
+    ColorJudge.measureTop(t.image).then(m => { if (editing.p.top === t) { Object.assign(t, m); editing.dirty = true; renderTop(); } });
+  }
   // 20261028-4 までの「なめらかさ」の場所は、グレーのキャップに変えて測り直す
   editing.p.color.areas.forEach(a => { if (a.look === 'smooth') { a.look = 'gray'; delete a.fitv; } });
   editing.areaIdx = null; editing.pickAnchor = false; editing.drawStart = null; editing.dirty = false;
@@ -1073,6 +1083,11 @@ function renderTop() {
     el.textContent = `緑の枠の中にキャップが見つかりません（グレーのかたまり 枠の ${Math.round(t.base * 100)}%）。キャップが付いた容器を、口が枠の真ん中に大きく写るように真上から撮り直してください。`;
     return;
   }
+  if (t.touch > ColorJudge.TOP_TOUCH) {
+    el.className = 'auto-status warn';
+    el.textContent = 'キャップが緑の枠からはみ出しています（または、キャップのまわりもグレーです）。少し離れて、キャップ全体が枠の中に入るように真上から撮り直してください。';
+    return;
+  }
   const sideCap = editing.p.color.areas.some(a => a.look === 'gray');
   el.className = 'auto-status ' + (sideCap ? 'warn' : 'ok');
   el.textContent = `キャップが見つかりました（グレーのかたまり 枠の ${Math.round(t.base * 100)}%）。横の判定が合格したあと、真上から撮って判定します。` +
@@ -1084,9 +1099,9 @@ $('#edTopInput').addEventListener('change', async () => {
   if (!f) return;
   try {
     const image = await fileToJpeg(f, 1280);
-    editing.p.top = { image, base: null }; editing.dirty = true;
+    const t = editing.p.top = { image, base: null }; editing.dirty = true;
     renderTop();
-    editing.p.top.base = (await ColorJudge.measureTop(image)).base;
+    Object.assign(t, await ColorJudge.measureTop(image));
     renderTop();
   } catch (e) { showError(e.message); }
 });
@@ -1104,7 +1119,7 @@ $('#btnSave').addEventListener('click', async () => {
   delete p.items; delete p.auto; // 20261028-4 までの「目視で確認する項目」「見本と見比べて判定」の設定は使わないので消す
   if (!p.name) { showError('製品名を入れてください。'); $('#edName').focus(); return; }
   if (!colorReady(p)) { showError('自動判定の設定（見本の写真・目印・判定する場所）を入れてください。'); renderEdit(); return; }
-  if (p.top && !topReady(p)) { showError('真上の写真でキャップが見つかりません。真上の写真を撮り直すか、「真上の写真を外す」を押してください。'); renderTop(); return; }
+  if (p.top && !topReady(p)) { showError('真上の写真でキャップがうまく見つかりません。真上の写真を撮り直すか、「真上の写真を外す」を押してください。'); renderTop(); return; }
   if (data.products.some(x => x.id !== p.id && x.name === p.name)) { showError('同じ製品名がすでに登録されています。'); return; }
   p.updatedAt = new Date().toISOString();
   const i = data.products.findIndex(x => x.id === p.id);

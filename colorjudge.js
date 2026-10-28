@@ -46,6 +46,12 @@ const ColorJudge = (() => {
   const TOP_ON = 0.5;         // 見本での割合のこの割合以上なら「あり」
   const TOP_OFF = 0.35;       // この割合以下なら「なし」（間は判定できない）
   const TOP_MIN = 0.12;       // 見本でかたまりが枠のこの割合未満なら、見本でキャップが見つかっていない
+  // キャップ以外のグレーの物（床・壁・机など）を「あり」にしないための、見本のキャップとの比べ方（shapeOk）
+  const TOP_BIG = 2;          // かたまりが見本のこの倍より大きければ、キャップではない
+  const TOP_TOUCH = 1;        // かたまりが枠のふちに届いている辺がこの数まで（キャップは枠の中に収まる。床・壁などは枠の外まで続く）
+  const TOP_SCALE = 1.5;      // かたまりの幅・高さが、見本の 1/1.5〜1.5 倍の間（撮る距離の違い）
+  const TOP_AR = 1.5;         // 幅と高さの倍率の違い（縦横の比の違い）がこの倍まで
+  const TOP_FILL = 0.2;       // 囲む四角の中の埋まり具合の違いがこの差まで
   const AVOID_TOL = 30;       // 場所の色を決めるとき、目印の色合いからこの幅（度）の色は選ばない
   const FIT_VERSION = 3;      // 場所の四角の決め方の版（変えたら上げる。アプリは見本の編集を開いたときに測り直す）
   const FIT_MARGIN = 0.1;     // 場所の四角のまわりに、少なくとも目印の幅・高さのこの割合の余白をとる
@@ -201,22 +207,24 @@ const ColorJudge = (() => {
     const ok = i => P.ss[i] < 0.15 && P.ll[i] > 0.25 && P.ll[i] < 0.8 &&
       Math.abs(P.ll[i + 1] - P.ll[i - 1]) + Math.abs(P.ll[i + W] - P.ll[i - W]) < grad;
     const seen = new Uint8Array(P.W * P.H);
-    let best = 0, t = 0;
+    let best = 0, t = 0, bw = 0, bh = 0, touch = 0;
     for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
       t++;
       const i0 = y * W + x;
       if (seen[i0] || !ok(i0)) continue;
-      const st = [i0]; seen[i0] = 1; let n = 0;
+      const st = [i0]; seen[i0] = 1; let n = 0, ax0 = x, ax1 = x, ay0 = y, ay1 = y;
       while (st.length) {
         const k = st.pop(), kx = k % W, ky = (k / W) | 0; n++;
+        if (kx < ax0) ax0 = kx; if (kx > ax1) ax1 = kx; if (ky < ay0) ay0 = ky; if (ky > ay1) ay1 = ky;
         if (kx > x0 && !seen[k - 1] && ok(k - 1)) { seen[k - 1] = 1; st.push(k - 1); }
         if (kx < x1 - 1 && !seen[k + 1] && ok(k + 1)) { seen[k + 1] = 1; st.push(k + 1); }
         if (ky > y0 && !seen[k - W] && ok(k - W)) { seen[k - W] = 1; st.push(k - W); }
         if (ky < y1 - 1 && !seen[k + W] && ok(k + W)) { seen[k + W] = 1; st.push(k + W); }
       }
-      if (n > best) best = n;
+      if (n > best) { best = n; bw = ax1 - ax0 + 1; bh = ay1 - ay0 + 1; touch = (ax0 <= x0) + (ax1 >= x1 - 1) + (ay0 <= y0) + (ay1 >= y1 - 1); }
     }
-    return { n: best, out: 1 - t / r.area };
+    // w, h：いちばん大きいかたまりを囲む四角の幅・高さ（px）、touch：そのかたまりが四角のふちに届いている辺の数（0〜4）
+    return { n: best, out: 1 - t / r.area, w: bw, h: bh, touch };
   }
   const anchorPx = (P, b) => Math.max(1, b.w * P.W * b.h * P.H);
   /* グレーのキャップで見る場所を決める：見本の写真の四角（0〜1）の中の、いちばん大きいグレーのかたまりの大きさ（目印の何倍か）
@@ -300,22 +308,35 @@ const ColorJudge = (() => {
     return { verdict, why: verdict, anchorBox: A, areas: res };
   }
 
-  /* 真上の写真：枠（TOP_GUIDE）の中のいちばん大きいグレーのかたまりが、枠の何割か（0〜1） */
-  async function topRatio(src) {
-    const P = await prep(src), r = pxBox(P, TOP_GUIDE);
-    return grayBlob(P, r, TOP_GRAD).n / r.area;
+  /* 真上の写真：枠（TOP_GUIDE）の中のいちばん大きいグレーのかたまり
+     戻り値：{ ratio（枠の何割か）, w, h（かたまりを囲む四角の幅・高さが、枠の幅・高さの何割か）, fill（その四角の中が、かたまりで埋まっている割合） } */
+  async function topShape(src) {
+    const P = await prep(src), r = pxBox(P, TOP_GUIDE), m = grayBlob(P, r, TOP_GRAD);
+    return { ratio: m.n / r.area, w: m.w / (r.x1 - r.x0), h: m.h / (r.y1 - r.y0), fill: m.n / Math.max(1, m.w * m.h), touch: m.touch };
   }
-  // 見本（真上の写真）を測る。戻り値：{ base }
-  async function measureTop(src) { return { base: await topRatio(src) }; }
+  // 見本（真上の写真）を測る。戻り値：{ base, w, h, fill, touch }
+  async function measureTop(src) { const m = await topShape(src); return { base: m.ratio, w: m.w, h: m.h, fill: m.fill, touch: m.touch }; }
   /* 真上の写真で判定する。cfg：{ base（見本での割合） }
      戻り値：{ verdict, why, ratio, base, on, off } */
   async function judgeTop(shot, cfg) {
     const base = cfg.base, on = base * TOP_ON, off = base * TOP_OFF;
     if (!(base >= TOP_MIN)) return { verdict: 'unsure', why: 'nobase', ratio: null, base, on, off };
-    const r = await topRatio(shot);
-    const verdict = r >= on ? 'pass' : r <= off ? 'fail' : 'unsure';
-    return { verdict, why: verdict === 'pass' ? 'ok' : verdict === 'fail' ? 'missing' : 'mid', ratio: r, base, on, off };
+    // 見本のかたまりの形（20261028-6 で登録した見本には無いので、見本の写真から測る）
+    const s = cfg.w ? cfg : cfg.image ? await measureTop(cfg.image) : null;
+    const m = await topShape(shot), r = m.ratio;
+    const res = (verdict, why) => ({ verdict, why, ratio: r, base, on, off, shape: m });
+    if (r <= off) return res('fail', 'missing');
+    if (r < on) return res('unsure', 'mid');
+    // 大きなグレーのかたまりがあっても、キャップ以外（床・壁・机など）のことがある。大きさ・形が見本のキャップと合うときだけ「あり」
+    if (s && !shapeOk(m, s)) return res('unsure', 'shape');
+    return res('pass', 'ok');
+  }
+  // かたまりの大きさ・形が、見本のキャップと合うか（撮る距離で大きさは変わるので、幅・高さの倍率と、縦横の比・埋まり具合で見る）
+  function shapeOk(m, s) {
+    const kw = m.w / s.w, kh = m.h / s.h;
+    return m.touch <= TOP_TOUCH && m.ratio <= s.base * TOP_BIG && kw >= 1 / TOP_SCALE && kw <= TOP_SCALE && kh >= 1 / TOP_SCALE && kh <= TOP_SCALE &&
+      Math.max(kw / kh, kh / kw) <= TOP_AR && Math.abs(m.fill - s.fill) <= TOP_FILL;
   }
 
-  return { pickAnchor, measureArea, measureSmooth, measureGray, measureTop, judgeTop, TOP_GUIDE, TOP_MIN, GRAY_ON, GRAY_OFF, GRAY_MIN, SMOOTH_ON, SMOOTH_OFF, SMOOTH_MIN, judge, hueDist, FIT_VERSION, ON, OFF, MIN_BASE, AVOID_TOL };
+  return { pickAnchor, measureArea, measureSmooth, measureGray, measureTop, judgeTop, topShape, TOP_GUIDE, TOP_MIN, TOP_TOUCH, GRAY_ON, GRAY_OFF, GRAY_MIN, SMOOTH_ON, SMOOTH_OFF, SMOOTH_MIN, judge, hueDist, FIT_VERSION, ON, OFF, MIN_BASE, AVOID_TOL };
 })();
